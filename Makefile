@@ -1,4 +1,4 @@
-.PHONY: train train-vae finetune eval record play sync submit list monitor logs clean-logs container fix-metaworld
+.PHONY: train train-vae finetune eval record play sync submit list monitor logs clean-logs container fix-metaworld gui
 
 # METAWORLD_CFG = $(shell uv run python -c "from pathlib import Path; import lerobot; print(Path(lerobot.__file__).parent / 'envs' / 'metaworld_config.json')")
 
@@ -27,8 +27,8 @@ finetune:
 		--policy.n_action_steps=10
 
 eval:
-	uv run lerobot-eval --config_path configs/eval.yaml \
-		--policy.path=reece-omahoney/smolvla-libero-256
+	lerobot-eval --config_path configs/eval.yaml \
+		--policy.path=lerobot/pi05_libero_finetuned
 
 eval-maha:
 	python piper_arm/eval_mahalanobis.py --n-episodes 5 --intervene --load-stats outputs/eval_mahalanobis/2026-02-19/13-15-11/gauss_stats.npz
