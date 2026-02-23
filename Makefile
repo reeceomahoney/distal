@@ -30,8 +30,8 @@ eval:
 	lerobot-eval --config_path configs/eval.yaml \
 		--policy.path=lerobot/pi05_libero_finetuned
 
-eval-maha:
-	python piper_arm/eval_mahalanobis.py
+eval-dist:
+	python piper_arm/eval_dist.py
 
 ############
 # Hardware #
@@ -55,7 +55,7 @@ sync:
 	rsync -avz --filter=':- .gitignore' ./ $(REMOTE_HOST):$(REMOTE_PATH)
 
 fetch-eval:
-	rsync -avz $(REMOTE_HOST):$(REMOTE_PATH)/outputs/eval_mahalanobis/ ./outputs/eval_mahalanobis/
+	rsync -avz $(REMOTE_HOST):$(REMOTE_PATH)/outputs/eval_dist/ ./outputs/eval_dist/
 
 submit: sync
 	ssh $(REMOTE_HOST) 'cd $(REMOTE_PATH) && sbatch bin/submit.sh $(CMD)'

@@ -16,21 +16,21 @@ Phase 2: Roll out the policy in LIBERO and at each timestep compute the VLM
 
 Usage:
     # Full run (embed dataset + rollout) with PI05:
-    python -m piper_arm.eval_mahalanobis \
+    python -m piper_arm.eval_dist \
         --policy-path lerobot/pi05_libero_finetuned \
         --repo-id reece-omahoney/libero \
         --n-episodes 1
 
     # Full run with SmolVLA:
-    python -m piper_arm.eval_mahalanobis \
+    python -m piper_arm.eval_dist \
         --policy-path lerobot/smolvla_libero_finetuned \
         --repo-id reece-omahoney/libero \
         --n-episodes 1
 
     # Reuse cached stats from a previous run:
-    python -m piper_arm.eval_mahalanobis \
+    python -m piper_arm.eval_dist \
         --policy-path lerobot/pi05_libero_finetuned \
-        --load-stats outputs/eval_mahalanobis/2026-02-17/15-08-29/gauss_stats.npz \
+        --load-stats outputs/eval_dist/2026-02-17/15-08-29/gauss_stats.npz \
         --n-episodes 1
 """
 
@@ -364,7 +364,7 @@ def plot_mahalanobis(results: list[dict], output_dir: Path):
     ax.grid(True, alpha=0.3)
     fig.tight_layout()
 
-    plot_path = output_dir / "eval_mahalanobis.png"
+    plot_path = output_dir / "eval_dist.png"
     fig.savefig(plot_path, dpi=150)
     print(f"Plot saved to {plot_path}")
     plt.show()
@@ -383,7 +383,7 @@ class EvalMahalanobisConfig:
     n_episodes: int = 1
     batch_size: int = 32
     num_workers: int = 8
-    load_stats: Optional[str] = None
+    load_stats: Optional[str] = "outputs/eval_dist/2026-02-20/11-06-37/gauss_stats.npz"
     intervene: bool = False
 
 
@@ -425,7 +425,7 @@ def main(cfg: EvalMahalanobisConfig):
         )
 
     timestamp = datetime.now().strftime("%Y-%m-%d/%H-%M-%S")
-    output_dir = Path(f"outputs/eval_mahalanobis/{timestamp}")
+    output_dir = Path(f"outputs/eval_dist/{timestamp}")
     output_dir.mkdir(parents=True, exist_ok=True)
 
     # Save Gaussian stats for reuse
@@ -532,7 +532,7 @@ def main(cfg: EvalMahalanobisConfig):
         vec_env.close()
 
     # Save results
-    output_path = output_dir / "eval_mahalanobis_results.json"
+    output_path = output_dir / "eval_dist_results.json"
     with open(output_path, "w") as f:
         json.dump(results, f, indent=2)
     print(f"\nResults saved to {output_path}")
