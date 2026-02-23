@@ -1,5 +1,7 @@
 """Evaluate Mahalanobis distance of VLM prefix embeddings during sim rollouts.
 
+Supports both PI05 and SmolVLA policies (auto-detected from checkpoint).
+
 Phase 1: Embed the entire training dataset to fit a Gaussian (mean + covariance)
           over the VLM prefix representations. These stats can be cached to disk.
 
@@ -13,18 +15,26 @@ Phase 2: Roll out the policy in LIBERO and at each timestep compute the VLM
           so the policy re-evaluates at every subsequent timestep.
 
 Usage:
-    # Full run (embed dataset + rollout):
+    # Full run (embed dataset + rollout) with PI05:
     python -m piper_arm.eval_mahalanobis \
-        --policy-path reece-omahoney/smolvla-libero-256 \
+        --policy-path lerobot/pi05_libero_finetuned \
+        --repo-id reece-omahoney/libero \
+        --n-episodes 1
+
+    # Full run with SmolVLA:
+    python -m piper_arm.eval_mahalanobis \
+        --policy-path lerobot/smolvla_libero_finetuned \
         --repo-id reece-omahoney/libero \
         --n-episodes 1
 
     # Reuse cached stats from a previous run:
     python -m piper_arm.eval_mahalanobis \
-        --policy-path reece-omahoney/smolvla-libero-256 \
+        --policy-path lerobot/pi05_libero_finetuned \
         --load-stats outputs/eval_mahalanobis/2026-02-17/15-08-29/gauss_stats.npz \
         --n-episodes 1
 """
+
+from __future__ import annotations
 
 import argparse
 import json
@@ -39,8 +49,13 @@ from lerobot.envs.configs import LiberoEnv as LiberoEnvConfig
 from lerobot.envs.factory import make_env, make_env_pre_post_processors
 from lerobot.envs.utils import add_envs_task, preprocess_observation
 from lerobot.policies.factory import make_policy, make_pre_post_processors
-from lerobot.policies.smolvla.modeling_smolvla import SmolVLAPolicy, make_att_2d_masks
-from lerobot.policies.utils import populate_queues
+from lerobot.policies.pi05.modeling_pi05 import PI05Policy, make_att_2d_masks
+from lerobot.policies.smolvla.modeling_smolvla import (
+    SmolVLAPolicy,
+)
+from lerobot.policies.smolvla.modeling_smolvla import (
+    make_att_2d_masks as smolvla_make_att_2d_masks,
+)
 from lerobot.utils.constants import (
     ACTION,
     OBS_LANGUAGE_ATTENTION_MASK,
@@ -56,8 +71,12 @@ from tqdm import tqdm
 
 
 @torch.no_grad()
-def embed_prefix_pooled(policy: SmolVLAPolicy, batch: dict) -> torch.Tensor:
+def embed_prefix_pooled(
+    policy: PI05Policy | SmolVLAPolicy, batch: dict
+) -> torch.Tensor:
     """Run a batch through the VLM prefix and return mean-pooled embeddings.
+
+    Supports both PI05 and SmolVLA policies.
 
     Args:
         batch: Already preprocessed observation dict on device.
@@ -65,8 +84,47 @@ def embed_prefix_pooled(policy: SmolVLAPolicy, batch: dict) -> torch.Tensor:
     Returns:
         (B, hidden_dim) mean-pooled over valid prefix tokens.
     """
-    model = policy.model
+    if isinstance(policy, PI05Policy):
+        prefix_out, prefix_pad_masks = _embed_prefix_pi05(policy, batch)
+    elif isinstance(policy, SmolVLAPolicy):
+        prefix_out, prefix_pad_masks = _embed_prefix_smolvla(policy, batch)
+    else:
+        raise TypeError(f"Unsupported policy type: {type(policy)}")
 
+    mask = prefix_pad_masks.unsqueeze(-1).float()
+    pooled = (prefix_out.float() * mask).sum(dim=1) / mask.sum(dim=1)
+    return pooled
+
+
+def _embed_prefix_pi05(policy: PI05Policy, batch: dict):
+    """PI05: images + language → PaliGemma prefix forward (4D attention masks)."""
+    model = policy.model
+    images, img_masks = policy._preprocess_images(batch)
+    lang_tokens = batch[OBS_LANGUAGE_TOKENS]
+    lang_masks = batch[OBS_LANGUAGE_ATTENTION_MASK]
+
+    prefix_embs, prefix_pad_masks, prefix_att_masks = model.embed_prefix(
+        images, img_masks, lang_tokens, lang_masks
+    )
+    prefix_att_2d_masks = make_att_2d_masks(prefix_pad_masks, prefix_att_masks)
+    prefix_position_ids = torch.cumsum(prefix_pad_masks, dim=1) - 1
+
+    prefix_att_2d_masks_4d = model._prepare_attention_masks_4d(prefix_att_2d_masks)
+    prefix_att_2d_masks_4d = prefix_att_2d_masks_4d.to(dtype=prefix_embs.dtype)
+
+    (prefix_out, _), _ = model.paligemma_with_expert.forward(
+        attention_mask=prefix_att_2d_masks_4d,
+        position_ids=prefix_position_ids,
+        past_key_values=None,
+        inputs_embeds=[prefix_embs, None],
+        use_cache=False,
+    )
+    return prefix_out, prefix_pad_masks
+
+
+def _embed_prefix_smolvla(policy: SmolVLAPolicy, batch: dict):
+    """SmolVLA: images + language + state → SmolVLM prefix forward (3D masks)."""
+    model = policy.model
     images, img_masks = policy.prepare_images(batch)
     state = policy.prepare_state(batch)
     lang_tokens = batch[OBS_LANGUAGE_TOKENS]
@@ -75,7 +133,7 @@ def embed_prefix_pooled(policy: SmolVLAPolicy, batch: dict) -> torch.Tensor:
     prefix_embs, prefix_pad_masks, prefix_att_masks = model.embed_prefix(
         images, img_masks, lang_tokens, lang_masks, state=state
     )
-    prefix_att_2d_masks = make_att_2d_masks(prefix_pad_masks, prefix_att_masks)
+    prefix_att_2d_masks = smolvla_make_att_2d_masks(prefix_pad_masks, prefix_att_masks)
     prefix_position_ids = torch.cumsum(prefix_pad_masks, dim=1) - 1
 
     (prefix_out, _), _ = model.vlm_with_expert.forward(
@@ -86,10 +144,7 @@ def embed_prefix_pooled(policy: SmolVLAPolicy, batch: dict) -> torch.Tensor:
         use_cache=False,
         fill_kv_cache=True,
     )
-
-    mask = prefix_pad_masks.unsqueeze(-1).float()
-    pooled = (prefix_out.float() * mask).sum(dim=1) / mask.sum(dim=1)
-    return pooled
+    return prefix_out, prefix_pad_masks
 
 
 def compute_mahalanobis_np(
@@ -107,7 +162,11 @@ def compute_mahalanobis_np(
 
 
 def fit_gaussian_from_dataset(
-    policy: SmolVLAPolicy, preprocessor, repo_id: str, batch_size: int, num_workers: int
+    policy: PI05Policy | SmolVLAPolicy,
+    preprocessor,
+    repo_id: str,
+    batch_size: int,
+    num_workers: int,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Embed the full dataset and return (mean, cov_inv)."""
     device = next(policy.parameters()).device
@@ -155,9 +214,18 @@ MA_WINDOW = 10
 INTERVENTION_K = 1.1
 
 
+def _get_action_queue(policy: PI05Policy | SmolVLAPolicy):
+    """Return the action deque for the given policy type."""
+    if isinstance(policy, PI05Policy):
+        return policy._action_queue
+    elif isinstance(policy, SmolVLAPolicy):
+        return policy._queues[ACTION]
+    raise TypeError(f"Unsupported policy type: {type(policy)}")
+
+
 @torch.no_grad()
 def select_action_with_mahalanobis(
-    policy: SmolVLAPolicy,
+    policy: PI05Policy | SmolVLAPolicy,
     batch: dict,
     gauss_mean: np.ndarray,
     gauss_cov_inv: np.ndarray,
@@ -166,6 +234,8 @@ def select_action_with_mahalanobis(
     intervene: bool = False,
 ) -> tuple[torch.Tensor, dict | None]:
     """Like select_action but also returns Mahalanobis distance of the current obs.
+
+    Supports both PI05 and SmolVLA policies.
 
     When intervene=True, reduces the action chunk to a single step when the
     per-episode moving average of distances exceeds INTERVENTION_K times the
@@ -182,11 +252,10 @@ def select_action_with_mahalanobis(
                steps, None on dequeue.
     """
     policy.eval()
-    batch = policy._prepare_batch(batch)
-    policy._queues = populate_queues(policy._queues, batch, exclude_keys=[ACTION])
+    action_queue = _get_action_queue(policy)
 
     stats = None
-    if len(policy._queues[ACTION]) == 0:
+    if len(action_queue) == 0:
         # Compute prefix embedding for Mahalanobis distance
         emb = embed_prefix_pooled(policy, batch)  # (1, D)
         emb_np = emb.cpu().numpy()
@@ -212,12 +281,11 @@ def select_action_with_mahalanobis(
 
         # Generate action chunk; if OOD, only use first action so we re-evaluate
         # on the very next step instead of committing to a full chunk.
-        action_chunk = policy._get_action_chunk(batch)
-        # n_steps = 1 if ood else policy.config.n_action_steps
-        n_steps = policy.config.n_action_steps
-        policy._queues[ACTION].extend(action_chunk.transpose(0, 1)[:n_steps])
+        action_chunk = policy.predict_action_chunk(batch)
+        n_steps = 1 if ood else policy.config.n_action_steps
+        action_queue.extend(action_chunk[:, :n_steps].transpose(0, 1))
 
-    action = policy._queues[ACTION].popleft()
+    action = action_queue.popleft()
     return action, stats
 
 
@@ -315,6 +383,7 @@ def main():
         "--policy-path",
         type=str,
         default="reece-omahoney/smolvla-libero-256",
+        # default="lerobot/pi05_libero_finetuned",
     )
     parser.add_argument("--repo-id", type=str, default="reece-omahoney/libero")
     parser.add_argument("--n-episodes", type=int, default=1, help="Episodes per task")
