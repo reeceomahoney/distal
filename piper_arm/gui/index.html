@@ -7,6 +7,7 @@
       rel="stylesheet"
       href="{{ url_for('static', filename='style.css') }}"
     />
+    <script src="https://unpkg.com/jquery@3.7.1/dist/jquery.min.js"></script>
     <script src="https://unpkg.com/htmx.org@2.0.4"></script>
     <script src="https://unpkg.com/htmx-ext-sse@2.3.0/sse.js"></script>
   </head>
@@ -51,39 +52,30 @@
     </div>
 
     <script>
-      function openLog(jobId) {
-        var placeholder = document.getElementById("log-placeholder");
-        var content = document.getElementById("log-content");
-        var stream = document.getElementById("log-stream");
-        var title = document.getElementById("log-title");
-        placeholder.style.display = "none";
-        content.style.display = "flex";
-        title.textContent = "Job " + jobId;
-        stream.innerHTML = "";
-        if (window._logSource) window._logSource.close();
-        var evtSource = new EventSource("/logs/" + jobId);
-        evtSource.onmessage = function (e) {
-          stream.textContent += e.data + "\n";
-          stream.scrollTop = stream.scrollHeight;
+      var _src;
+      function openLog(id) {
+        if (_src) _src.close();
+        $("#log-placeholder").hide();
+        $("#log-content").css("display", "flex");
+        $("#log-title").text("Job " + id);
+        var $s = $("#log-stream").empty();
+        _src = new EventSource("/logs/" + id);
+        _src.onmessage = function (e) {
+          $s.append(document.createTextNode(e.data + "\n"));
+          $s.scrollTop($s[0].scrollHeight);
         };
-        evtSource.onerror = function () {
-          evtSource.close();
-        };
-        window._logSource = evtSource;
+        _src.onerror = function () { _src.close(); };
       }
       function closeLog() {
-        if (window._logSource) window._logSource.close();
-        document.getElementById("log-content").style.display = "none";
-        document.getElementById("log-placeholder").style.display = "flex";
-        document.getElementById("log-stream").innerHTML = "";
+        if (_src) _src.close();
+        $("#log-content").hide();
+        $("#log-placeholder").css("display", "flex");
+        $("#log-stream").empty();
       }
-      function cancelJob(jobId) {
-        if (!confirm("Cancel job " + jobId + "?")) return;
-        fetch("/cancel/" + jobId, { method: "POST" }).then(function () {
-          htmx.ajax("GET", "/jobs", {
-            target: '[hx-get="/jobs"]',
-            swap: "innerHTML",
-          });
+      function cancelJob(id) {
+        if (!confirm("Cancel job " + id + "?")) return;
+        $.post("/cancel/" + id).then(function () {
+          htmx.ajax("GET", "/jobs", { target: '[hx-get="/jobs"]', swap: "innerHTML" });
         });
       }
     </script>
