@@ -377,13 +377,12 @@ def plot_mahalanobis(results: list[dict], output_dir: Path):
 
 @dataclass
 class EvalMahalanobisConfig:
-    policy_path: str = "reece-omahoney/smolvla-libero-256"
-    # policy_path: str = "lerobot/pi05_libero_finetuned"
+    policy_path: str = "reece-omahoney/smolvla-libero-16-chunk"
     dataset: str = "reece-omahoney/libero"
-    n_episodes: int = 1
+    n_episodes: int = 10
     batch_size: int = 32
     num_workers: int = 8
-    load_stats: Optional[str] = "outputs/eval_dist/2026-02-20/11-06-37/gauss_stats.npz"
+    load_stats: Optional[str] = "outputs/eval_dist/2026-02-24/13-33-02/gauss_stats.npz"
     intervene: bool = False
 
 
