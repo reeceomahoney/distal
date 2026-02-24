@@ -40,6 +40,7 @@ From: python:3.10-slim
     export LIBERO_CONFIG_PATH=.cache/libero
     export WANDB_CACHE_DIR=.cache/wandb
     export TOKENIZERS_PARALLELISM=false
+    export TORCHINDUCTOR_CACHE_DIR=.cache/torchinductor
 
 %runscript
     exec "$@"
