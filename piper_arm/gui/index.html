@@ -24,7 +24,11 @@
           <div class="card-header">
             <h2>Jobs</h2>
             <div class="btn-group">
-              <button class="btn" id="fetch-results-btn" onclick="fetchResults()">
+              <button
+                class="btn"
+                id="fetch-results-btn"
+                onclick="fetchResults()"
+              >
                 Fetch Results
               </button>
               <button class="btn" id="clean-logs-btn" onclick="cleanLogs()">
@@ -45,7 +49,7 @@
       </div>
       <div class="card right" id="log-panel">
         <div class="log-placeholder" id="log-placeholder">
-          Select a running job to view logs
+          Select a job to view logs
         </div>
         <div id="log-content" style="display: none">
           <div class="log-header">
@@ -59,13 +63,14 @@
 
     <script>
       var _src;
-      function openLog(id) {
+      function openLog(id, follow) {
         if (_src) _src.close();
         $("#log-placeholder").hide();
         $("#log-content").css("display", "flex");
         $("#log-title").text("Job " + id);
         var $s = $("#log-stream").empty();
-        _src = new EventSource("/logs/" + id);
+        var url = "/logs/" + id + (follow ? "" : "?follow=0");
+        _src = new EventSource(url);
         _src.onmessage = function (e) {
           $s.append(document.createTextNode(e.data + "\n"));
           $s.scrollTop($s[0].scrollHeight);

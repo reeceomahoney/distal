@@ -3,7 +3,7 @@
 import subprocess
 from pathlib import Path
 
-from flask import Flask, Response, render_template
+from flask import Flask, Response, render_template, request
 
 from piper_arm.slurm import PROJECT_ROOT, REMOTE_HOST, REMOTE_PATH
 
@@ -53,9 +53,37 @@ def nodes():
 
 @app.route("/jobs")
 def jobs():
-    raw = ssh("squeue -u $USER -o '%.12i %.30j %.8T %.10M %.20R'")
+    raw = ssh("squeue -u $USER -o '%.12i %.30j %.8T %.10M %.20b'")
     headers, rows = parse_table(raw)
-    return render_template("jobs.html", headers=headers, rows=rows)
+    # Rename ugly TRES_PER_NODE header
+    headers = ["GPU" if "TRES" in h else h for h in headers]
+    # Recent completed/failed/cancelled jobs from the last 7 days
+    raw_closed = ssh(
+        "sacct -u $USER -S now-7days --noheader --parsable2 -X "
+        "-o 'JobID,JobName,State,Elapsed,AllocTRES' "
+        "| grep -vE 'RUNNING|PENDING'"
+    )
+    closed_lines = [ln for ln in raw_closed.strip().splitlines() if ln.strip()]
+    closed_rows = [ln.split("|") for ln in reversed(closed_lines)]
+    for row in closed_rows:
+        # Truncate "CANCELLED by 12345" to just "CANCELLED"
+        if len(row) > 2:
+            row[2] = row[2].split()[0]
+        tres = row[4] if len(row) > 4 else ""
+        gpu = ""
+        for part in tres.split(","):
+            if "gres/gpu:" in part:
+                gpu = part.split("gres/gpu:")[1].split("=")[0]
+                break
+        row[4:] = [gpu]
+    closed_headers = ["JOBID", "NAME", "STATE", "ELAPSED", "GPU"] if closed_rows else []
+    return render_template(
+        "jobs.html",
+        headers=headers,
+        rows=rows,
+        closed_headers=closed_headers,
+        closed_rows=closed_rows,
+    )
 
 
 @app.route("/cancel/<job_id>", methods=["POST"])
@@ -99,9 +127,16 @@ def logs(job_id):
     if not job_id.isdigit():
         return "Bad job id", 400
 
+    follow = request.args.get("follow", "1") == "1"
+    cmd = (
+        f"tail -n +1 -f {REMOTE_PATH}/slurm-{job_id}.out"
+        if follow
+        else f"cat {REMOTE_PATH}/slurm-{job_id}.out"
+    )
+
     def stream():
         proc = subprocess.Popen(
-            ["ssh", REMOTE_HOST, f"tail -n +1 -f {REMOTE_PATH}/slurm-{job_id}.out"],
+            ["ssh", REMOTE_HOST, cmd],
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,

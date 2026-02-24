@@ -131,8 +131,21 @@ tr:hover td {
   color: var(--yellow);
 }
 .state-FAILED,
-.state-CANCELLED {
+.state-CANCELLED,
+.state-CANCELLED + {
   color: var(--red);
+}
+.state-COMPLETED {
+  color: var(--green);
+}
+.state-TIMEOUT {
+  color: var(--yellow);
+}
+
+/* Section divider in jobs table */
+.section-divider td {
+  border-bottom: 1px solid var(--border);
+  padding-top: 0.4rem;
 }
 
 /* Buttons */
