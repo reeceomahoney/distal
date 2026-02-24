@@ -1,0 +1,85 @@
+import subprocess
+from dataclasses import dataclass
+from io import StringIO
+from pathlib import Path
+
+import draccus
+from fabric import Connection
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+
+
+@dataclass
+class SlurmConfig:
+    command: str
+
+    # SLURM options
+    time: int = 1
+    gpu: str = "h100"
+    ngpu: int = 1
+    cpus: int = 16
+    mem: str = "8G"
+
+    # Debug
+    dry_run: bool = False
+
+
+def build_sbatch_script(cfg: SlurmConfig) -> str:
+    sbatch_opts = {
+        "nodes": 1,
+        "ntasks-per-node": cfg.cpus,
+        "mem-per-cpu": cfg.mem,
+        "time": f"{cfg.time}:00:00",
+        "partition": "short",
+        "gres": f"gpu:{cfg.gpu}:{cfg.ngpu}",
+    }
+    header = "\n".join(f"#SBATCH --{k}={v}" for k, v in sbatch_opts.items())
+
+    body = " ".join(
+        [
+            "singularity run --nv",
+            '--env "WANDB_API_KEY=${WANDB_API_KEY}"',
+            '--env "HF_TOKEN=${HF_TOKEN}"',
+            f"container.sif {cfg.command}",
+        ]
+    )
+
+    return f"#!/bin/bash\n{header}\n\nset -euo pipefail\n{body}\n"
+
+
+def sync(remote_host: str, remote_path: str) -> None:
+    subprocess.run(
+        [
+            "rsync",
+            "-avz",
+            "--filter=:- .gitignore",
+            f"{PROJECT_ROOT}/",
+            f"{remote_host}:{remote_path}",
+        ],
+        check=True,
+    )
+
+
+@draccus.wrap()  # type: ignore[misc]
+def main(cfg: SlurmConfig):
+    remote_host = "htc"
+    remote_path = "/data/engs-robotics-ml/kebl6123/piper_arm"
+
+    script = build_sbatch_script(cfg)
+
+    if cfg.dry_run:
+        print("=== sbatch script ===")
+        print(script)
+        return
+
+    print("Syncing...", flush=True)
+    sync(remote_host, remote_path)
+
+    print("Submitting...", flush=True)
+    conn = Connection(remote_host)
+    conn.put(StringIO(script), f"{remote_path}/.submit.sh")
+    conn.run(f"cd {remote_path} && sbatch .submit.sh")
+
+
+if __name__ == "__main__":
+    main()  # type: ignore[call-arg]

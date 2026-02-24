@@ -14,6 +14,7 @@ dependencies = [
   "scikit-learn>=1.3.0",
   "prettytable>=3.17.0",
   "lightning>=2.6.1",
+  "fabric>=3.2.2",
 ]
 
 [dependency-groups]

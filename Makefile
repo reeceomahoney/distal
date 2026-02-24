@@ -1,13 +1,4 @@
-.PHONY: train train-vae finetune eval record play sync submit list monitor logs clean-logs container fix-metaworld gui
-
-# METAWORLD_CFG = $(shell uv run python -c "from pathlib import Path; import lerobot; print(Path(lerobot.__file__).parent / 'envs' / 'metaworld_config.json')")
-
-fix-metaworld:
-	@test -f $(METAWORLD_CFG) || { \
-		echo "Patching missing metaworld_config.json..."; \
-		curl -sfL -o $(METAWORLD_CFG) \
-			https://raw.githubusercontent.com/huggingface/lerobot/main/src/lerobot/envs/metaworld_config.json; \
-	}
+.PHONY: train train-vae finetune eval eval-dist record play fetch-eval clean-logs gui
 
 ############
 # Training #
@@ -51,31 +42,8 @@ play:
 REMOTE_HOST = htc
 REMOTE_PATH = ${DATA}/piper_arm
 
-sync:
-	rsync -avz --filter=':- .gitignore' ./ $(REMOTE_HOST):$(REMOTE_PATH)
-
 fetch-eval:
 	rsync -avz $(REMOTE_HOST):$(REMOTE_PATH)/outputs/eval_dist/ ./outputs/eval_dist/
-
-submit: sync
-	ssh $(REMOTE_HOST) 'cd $(REMOTE_PATH) && sbatch bin/submit.sh $(CMD)'
-
-list:
-	@ssh $(REMOTE_HOST) 'sinfo -N -p short -o "%.20N %.5t %.15C %.10m %.20G" | awk "NR==1 || /h100/ || /l40s/"'
-
-status:
-	ssh $(REMOTE_HOST) 'squeue -u $$USER'
-
-cancel:
-	ssh $(REMOTE_HOST) 'scancel -u $$USER'
-
-logs:
-	@set -- $$(ssh $(REMOTE_HOST) 'squeue -u $$USER -h -t R -o "$(REMOTE_PATH)/slurm-%i.out"'); \
-	first=$$1; shift; \
-	for f; do \
-		tmux split-window -v "ssh $(REMOTE_HOST) 'tail -f $$f'"; \
-	done; \
-	ssh $(REMOTE_HOST) "tail -f $$first"
 
 clean-logs:
 	ssh $(REMOTE_HOST) 'cd $(REMOTE_PATH) && running=$$(squeue -u $$USER -h -t R -o "slurm-%i.out"); \
@@ -87,10 +55,3 @@ clean-logs:
 
 gui:
 	uv run --extra gui piper_arm/gui/app.py
-
-###############
-# Singularity #
-###############
-
-container: sync
-	ssh $(REMOTE_HOST) 'cd $(REMOTE_PATH) && sbatch bin/build.sh'
