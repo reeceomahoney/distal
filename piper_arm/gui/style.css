@@ -60,7 +60,7 @@ h2 {
   overflow-y: auto;
 }
 .left-bottom {
-  flex: 2;
+  flex: 1;
   overflow-y: auto;
 }
 

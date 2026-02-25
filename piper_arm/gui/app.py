@@ -44,7 +44,7 @@ def index():
 @app.route("/nodes")
 def nodes():
     raw = ssh(
-        "sinfo -N -p short -o '%.20N %.5t %.15C %.10m %.20G'"
+        "sinfo -p short -o '%.20N %.5t %.15C %.10m %.20G'"
         " | awk 'NR==1 || /h100/ || /l40s/'"
     )
     headers, rows = parse_table(raw)
