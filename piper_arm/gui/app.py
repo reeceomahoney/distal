@@ -133,6 +133,15 @@ def jobs():
     headers, rows = parse_table(raw)
     # Rename ugly TRES_PER_NODE header
     headers = ["GPU" if "TRES" in h else h for h in headers]
+    # Format GPU column: "gpu:l40s:1" -> "l40s"
+    gpu_idx = headers.index("GPU") if "GPU" in headers else None
+    if gpu_idx is not None:
+        for row in rows:
+            if gpu_idx < len(row):
+                m = _GRES_TYPE_RE.search(row[gpu_idx])
+                row[gpu_idx] = (
+                    f"{m.group(1).upper()}:{m.group(2)}" if m else row[gpu_idx]
+                )
     # Recent completed/failed/cancelled jobs from the last 7 days
     raw_closed = ssh(
         "sacct -u $USER -S now-7days --noheader --parsable2 -X "
@@ -149,7 +158,9 @@ def jobs():
         gpu = ""
         for part in tres.split(","):
             if "gres/gpu:" in part:
-                gpu = part.split("gres/gpu:")[1].split("=")[0]
+                rest = part.split("gres/gpu:")[1]
+                name, _, count = rest.partition("=")
+                gpu = f"{name.upper()}:{count}" if count else name.upper()
                 break
         row[4:] = [gpu]
     closed_headers = ["JOBID", "NAME", "STATE", "ELAPSED", "GPU"] if closed_rows else []
