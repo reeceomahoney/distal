@@ -1,4 +1,4 @@
-.PHONY: train finetune eval record play gui
+.PHONY: train finetune eval record play gui container
 
 ############
 # Training #
@@ -35,3 +35,14 @@ play:
 
 gui:
 	uv run --extra gui piper_arm/gui/app.py
+
+#############
+# Container #
+#############
+
+REMOTE_HOST := htc
+REMOTE_PATH := /data/engs-robotics-ml/kebl6123/piper_arm
+
+container:
+	singularity build --fakeroot container.sif container.def
+	scp container.sif $(REMOTE_HOST):$(REMOTE_PATH)/container.sif

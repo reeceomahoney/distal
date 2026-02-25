@@ -35,6 +35,7 @@ Usage:
 """
 
 import json
+import os
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -438,7 +439,10 @@ class EvalMahalanobisConfig:
     n_episodes: int = 50
     batch_size: int = 32
     num_workers: int = 8
-    load_stats: Optional[str] = "outputs/eval_dist/2026-02-24/17-07-42/gauss_stats.npz"
+    load_stats: Optional[str] = os.path.join(
+        os.environ.get("OUTPUT_DIR", "outputs"),
+        "eval_dist/2026-02-24/17-07-42/gauss_stats.npz",
+    )
 
 
 def _run_episode(
@@ -611,7 +615,8 @@ def main(cfg: EvalMahalanobisConfig):
         )
 
     timestamp = datetime.now().strftime("%Y-%m-%d/%H-%M-%S")
-    output_dir = Path(f"outputs/eval_dist/{timestamp}")
+    output_base = Path(os.environ.get("OUTPUT_DIR", "outputs"))
+    output_dir = output_base / f"eval_dist/{timestamp}"
     output_dir.mkdir(parents=True, exist_ok=True)
 
     # Save Gaussian stats for reuse

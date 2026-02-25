@@ -9,10 +9,12 @@ workdir: .
 envs:
   WANDB_API_KEY: ${WANDB_API_KEY}
   HF_TOKEN: ${HF_TOKEN}
+  OUTPUT_DIR: /data/engs-robotics-ml/kebl6123/piper_arm/outputs
 
 run: |
   singularity run --nv \
     --env "WANDB_API_KEY=${WANDB_API_KEY}" \
     --env "HF_TOKEN=${HF_TOKEN}" \
+    --env "OUTPUT_DIR=${OUTPUT_DIR}" \
     /data/engs-robotics-ml/kebl6123/piper_arm/container.sif \
     python piper_arm/eval_dist.py

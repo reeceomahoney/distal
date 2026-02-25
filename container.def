@@ -32,15 +32,18 @@ From: python:3.10-slim
 %environment
     export PATH="/opt/piper_arm/.venv/bin:/root/.local/bin:$PATH"
     export PYTHONDONTWRITEBYTECODE=1
+    export PYTHONUNBUFFERED=1
     export MUJOCO_GL=egl
     export PYOPENGL_PLATFORM=egl
-    export PYTHONUNBUFFERED=1
-    export UV_CACHE_DIR=/data/engs-robotics-ml/kebl6123/piper_arm/.cache/uv
-    export HF_HOME=/data/engs-robotics-ml/kebl6123/piper_arm/.cache/huggingface
-    export LIBERO_CONFIG_PATH=/data/engs-robotics-ml/kebl6123/piper_arm/.cache/libero
-    export WANDB_CACHE_DIR=/data/engs-robotics-ml/kebl6123/piper_arm/.cache/wandb
     export TOKENIZERS_PARALLELISM=false
-    export TORCHINDUCTOR_CACHE_DIR=/data/engs-robotics-ml/kebl6123/piper_arm/.cache/torchinductor
+
+    # Cache directories
+    export CACHE_DIR=${CACHE_DIR:-/data/engs-robotics-ml/kebl6123/piper_arm/.cache}
+    export UV_CACHE_DIR=$CACHE_DIR/uv
+    export HF_HOME=$CACHE_DIR/huggingface
+    export LIBERO_CONFIG_PATH=$CACHE_DIR/libero
+    export WANDB_CACHE_DIR=$CACHE_DIR/wandb
+    export TORCHINDUCTOR_CACHE_DIR=$CACHE_DIR/torchinductor
 
 %runscript
     exec "$@"
