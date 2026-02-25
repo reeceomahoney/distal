@@ -27,9 +27,11 @@
   </tr>
   {% endfor %}
   {% if closed_rows %}
+  {% if rows %}
   <tr class="section-divider">
     <td colspan="{{ col_count }}"></td>
   </tr>
+  {% endif %}
   {% for row in closed_rows %}
   {% set job_id = row[0] %}
   {% set state = row[2] if row|length > 2 else "" %}
