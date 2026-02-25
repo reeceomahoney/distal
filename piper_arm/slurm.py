@@ -36,6 +36,7 @@ def build_sbatch_script(cfg: SlurmConfig) -> str:
         "time": f"{cfg.time}:00:00",
         "partition": "short",
         "gres": f"gpu:{cfg.gpu}:{cfg.ngpu}",
+        "output": "slurm/slurm-%j.out",
     }
     header = "\n".join(f"#SBATCH --{k}={v}" for k, v in sbatch_opts.items())
 
@@ -78,8 +79,8 @@ def main(cfg: SlurmConfig):
 
     print("Submitting...")
     conn = Connection(REMOTE_HOST)
-    conn.put(StringIO(script), f"{REMOTE_PATH}/.submit.sh")
-    conn.run(f"cd {REMOTE_PATH} && sbatch .submit.sh")
+    conn.put(StringIO(script), f"{REMOTE_PATH}/submit.sh")
+    conn.run(f"cd {REMOTE_PATH} && mkdir -p slurm && sbatch submit.sh")
 
 
 if __name__ == "__main__":

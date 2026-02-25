@@ -188,7 +188,8 @@ def fetch_results():
 @app.route("/clean-logs", methods=["DELETE"])
 def clean_logs():
     ssh(
-        f"cd {REMOTE_PATH} && running=$(squeue -u $USER -h -t R -o 'slurm-%i.out'); "
+        f"cd {REMOTE_PATH}/slurm"
+        " && running=$(squeue -u $USER -h -t R -o 'slurm-%i.out'); "
         'if [ -n "$running" ]; then '
         'ls slurm-*.out 2>/dev/null | grep -vF "$running" | xargs -r rm -f; '
         "else "
@@ -205,9 +206,9 @@ def logs(job_id):
 
     follow = request.args.get("follow", "1") == "1"
     cmd = (
-        f"tail -n +1 -f {REMOTE_PATH}/slurm-{job_id}.out"
+        f"tail -n +1 -f {REMOTE_PATH}/slurm/slurm-{job_id}.out"
         if follow
-        else f"cat {REMOTE_PATH}/slurm-{job_id}.out"
+        else f"cat {REMOTE_PATH}/slurm/slurm-{job_id}.out"
     )
 
     def stream():
