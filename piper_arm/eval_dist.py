@@ -242,6 +242,8 @@ def fit_gaussian_from_dataset(
 MA_WINDOW = 10
 INTERVENTION_K = 1.1
 
+CONDITIONS = ["control", "intervene"]
+
 
 def _get_action_queue(policy: Union[PI05Policy, SmolVLAPolicy]):
     """Return the action deque for the given policy type."""
@@ -323,53 +325,63 @@ def select_action_with_mahalanobis(
 # ──────────────────────────────────────────────────────────────────────
 
 
-def plot_mahalanobis(results: list[dict], output_dir: Path):
-    """Plot per-timestep Mahalanobis distance (moving average) for each episode."""
-    import matplotlib.pyplot as plt
+def _plot_condition(
+    ax: Any,
+    paired_results: list[dict],
+    condition: str,
+    title: str,
+):
+    """Plot Mahalanobis traces for one condition (control or intervene)."""
     from matplotlib.lines import Line2D
 
-    fig, ax = plt.subplots(figsize=(12, 6))
+    success_key = f"{condition}_success"
+    timesteps_key = f"{condition}_timesteps"
 
-    has_interventions = any(
-        any(t.get("intervention") for t in record["timesteps"]) for record in results
+    has_interventions = condition == "intervene" and any(
+        any(t.get("intervention") for t in record[timesteps_key])
+        for record in paired_results
     )
-    for record in results:
-        steps = np.array([t["step"] for t in record["timesteps"]])
-        dists = np.array([t["mahalanobis"] for t in record["timesteps"]])
-        color = "#2ecc71" if record["success"] else "#e74c3c"
+
+    for record in paired_results:
+        timesteps = record[timesteps_key]
+        if not timesteps:
+            continue
+        steps = np.array([t["step"] for t in timesteps])
+        dists = np.array([t["mahalanobis"] for t in timesteps])
+        iv_flags = np.array([bool(t.get("intervention")) for t in timesteps])
+        color = "#2ecc71" if record[success_key] else "#e74c3c"
 
         if len(dists) >= MA_WINDOW:
             kernel = np.ones(MA_WINDOW) / MA_WINDOW
             ma_dists = np.convolve(dists, kernel, mode="valid")
             ma_steps = steps[MA_WINDOW - 1 :]
+            ma_iv = np.convolve(iv_flags.astype(float), kernel, mode="valid") > 0
         else:
             ma_dists = dists
             ma_steps = steps
+            ma_iv = iv_flags
 
-        # Find first intervention index in original timestep array
-        first_iv_idx = next(
-            (i for i, t in enumerate(record["timesteps"]) if t.get("intervention")),
-            None,
-        )
-        if first_iv_idx is not None:
-            split = max(0, first_iv_idx - MA_WINDOW + 1)
-            ax.plot(
-                ma_steps[: split + 1],
-                ma_dists[: split + 1],
-                color=color,
-                alpha=0.7,
-                linewidth=1.0,
-            )
-            ax.plot(
-                ma_steps[split:],
-                ma_dists[split:],
-                color=color,
-                alpha=0.7,
-                linewidth=1.0,
-                linestyle=":",
-            )
-        else:
+        if not ma_iv.any():
             ax.plot(ma_steps, ma_dists, color=color, alpha=0.7, linewidth=1.0)
+        else:
+            # Draw segments, switching style when intervention state changes
+            changes = np.where(np.diff(ma_iv.astype(int)) != 0)[0] + 1
+            segments = np.split(np.arange(len(ma_steps)), changes)
+            for seg in segments:
+                if len(seg) == 0:
+                    continue
+                # Extend by 1 point to connect segments seamlessly
+                lo = seg[0]
+                hi = min(seg[-1] + 2, len(ma_steps))
+                style = ":" if ma_iv[seg[0]] else "-"
+                ax.plot(
+                    ma_steps[lo:hi],
+                    ma_dists[lo:hi],
+                    color=color,
+                    alpha=0.7,
+                    linewidth=1.0,
+                    linestyle=style,
+                )
 
     handles = [
         Line2D([0], [0], color="#2ecc71", label="Success"),
@@ -388,9 +400,24 @@ def plot_mahalanobis(results: list[dict], output_dir: Path):
         )
     ax.legend(handles=handles, fontsize=8)
     ax.set_xlabel("Timestep")
-    ax.set_ylabel(f"Mahalanobis Distance (moving avg, window={MA_WINDOW})")
-    ax.set_title("Mahalanobis Distance of VLM Prefix Embeddings During Rollout")
+    ax.set_ylabel(f"Mahalanobis Distance (MA, w={MA_WINDOW})")
+    ax.set_title(title)
     ax.grid(True, alpha=0.3)
+
+
+def plot_mahalanobis(paired_results: list[dict], output_dir: Path):
+    """Plot paired A/B Mahalanobis distance traces side by side."""
+    import matplotlib.pyplot as plt
+
+    fig, (ax_ctrl, ax_intv) = plt.subplots(1, 2, figsize=(18, 6), sharey=True)
+
+    _plot_condition(ax_ctrl, paired_results, "control", "Control (no intervention)")
+    _plot_condition(ax_intv, paired_results, "intervene", "With Intervention")
+
+    fig.suptitle(
+        "Paired A/B: Mahalanobis Distance of VLM Prefix Embeddings",
+        fontsize=14,
+    )
     fig.tight_layout()
 
     plot_path = output_dir / "eval_dist.png"
@@ -408,18 +435,149 @@ def plot_mahalanobis(results: list[dict], output_dir: Path):
 class EvalMahalanobisConfig:
     policy_path: str = "reece-omahoney/smolvla-libero-16-chunk"
     dataset: str = "reece-omahoney/libero"
-    n_episodes: int = 5
+    n_episodes: int = 50
     batch_size: int = 32
     num_workers: int = 8
-    load_stats: Optional[str] = None
-    intervene: bool = False
+    load_stats: Optional[str] = "outputs/eval_dist/2026-02-24/17-07-42/gauss_stats.npz"
+
+
+def _run_episode(
+    policy: Union[PI05Policy, SmolVLAPolicy],
+    vec_env: Any,
+    preprocessor: Any,
+    postprocessor: Any,
+    env_preprocessor: Any,
+    env_postprocessor: Any,
+    gauss_mean: np.ndarray,
+    gauss_cov_inv: np.ndarray,
+    seed: int,
+    intervene: bool,
+    desc: str = "",
+) -> dict[str, Any]:
+    """Run a single episode and return the result record."""
+    max_steps = vec_env.call("_max_episode_steps")[0]  # type: ignore[attr-defined]
+    observation, info = vec_env.reset(seed=[seed])  # type: ignore[arg-type]
+    policy.reset()
+    success = False
+    timestep_metrics: list[dict[str, Any]] = []
+    dist_history: list[float] = []
+    done = False
+    step = 0
+
+    for step in tqdm(
+        range(max_steps),
+        desc=desc,
+        leave=False,
+        disable=inside_slurm(),
+    ):
+        if done:
+            break
+
+        observation = preprocess_observation(observation)
+        observation = add_envs_task(vec_env, observation)
+        observation = env_preprocessor(observation)
+        observation = preprocessor(observation)
+
+        with torch.inference_mode():
+            action, stats = select_action_with_mahalanobis(
+                policy,
+                observation,
+                gauss_mean,
+                gauss_cov_inv,
+                dist_histories=[dist_history],
+                done=np.array([done]),
+                intervene=intervene,
+            )
+
+        if stats is not None:
+            entry: dict[str, Any] = {
+                "step": step,
+                "mahalanobis": stats["mahalanobis"][0],
+            }
+            if intervene:
+                entry["intervention"] = stats["intervention"]
+            timestep_metrics.append(entry)
+
+        action = postprocessor(action)
+
+        action_transition = {ACTION: action}
+        action_transition = env_postprocessor(action_transition)
+        action_np = action_transition[ACTION].to("cpu").numpy()
+
+        observation, _, terminated, truncated, info = vec_env.step(action_np)
+
+        if "final_info" in info:
+            if info["final_info"]["is_success"].item():
+                success = True
+
+        done = bool(terminated | truncated)
+
+    if timestep_metrics:
+        mean_dist = np.mean([m["mahalanobis"] for m in timestep_metrics])
+        n_interventions = sum(
+            1 for m in timestep_metrics if m.get("intervention", False)
+        )
+    else:
+        mean_dist = float("nan")
+        n_interventions = 0
+
+    return {
+        "n_steps": step + 1,
+        "success": success,
+        "mean_mahalanobis": float(mean_dist),
+        "n_interventions": n_interventions,
+        "timesteps": timestep_metrics,
+    }
+
+
+def _mcnemar_test(
+    pairs: list[dict],
+) -> dict[str, Any]:
+    """Compute McNemar's test from paired (control, intervene) success outcomes.
+
+    Returns dict with contingency table counts, chi-squared statistic, and p-value.
+    """
+    from scipy.stats import binomtest
+
+    # Contingency table for discordant pairs
+    # b = control fail, treatment success (intervention helped)
+    # c = control success, treatment fail (intervention hurt)
+    b = sum(1 for p in pairs if not p["control_success"] and p["intervene_success"])
+    c = sum(1 for p in pairs if p["control_success"] and not p["intervene_success"])
+    a = sum(1 for p in pairs if p["control_success"] and p["intervene_success"])
+    d = sum(1 for p in pairs if not p["control_success"] and not p["intervene_success"])
+
+    n_discordant = b + c
+    if n_discordant == 0:
+        p_value = 1.0
+        chi2 = 0.0
+    elif n_discordant < 25:
+        # Exact binomial test for small samples
+        p_value = float(binomtest(b, n_discordant, 0.5).pvalue)
+        chi2 = float("nan")
+    else:
+        # McNemar's chi-squared with continuity correction
+        chi2 = (abs(b - c) - 1) ** 2 / (b + c)
+        from scipy.stats import chi2 as chi2_dist
+
+        p_value = float(1 - chi2_dist.cdf(chi2, df=1))
+
+    return {
+        "concordant_both_success": a,
+        "concordant_both_fail": d,
+        "discordant_intervention_helped": b,
+        "discordant_intervention_hurt": c,
+        "n_discordant": n_discordant,
+        "chi2": chi2,
+        "p_value": p_value,
+    }
 
 
 @draccus.wrap()  # type: ignore[misc]
 def main(cfg: EvalMahalanobisConfig):
     # ── Load policy ──
     suite_name = "libero_10"
-    env_cfg = LiberoEnvConfig(suite_name, fps=10)
+    env_cfg = LiberoEnvConfig(suite_name, fps=10, task_ids=[9])
     policy_cfg = PreTrainedConfig.from_pretrained(cfg.policy_path)
     policy_cfg.pretrained_path = Path(cfg.policy_path)
 
@@ -460,142 +618,154 @@ def main(cfg: EvalMahalanobisConfig):
     np.savez(output_dir / "gauss_stats.npz", mean=gauss_mean, cov_inv=gauss_cov_inv)
     print(f"Saved Gaussian stats to {output_dir / 'gauss_stats.npz'}")
 
-    # ── Phase 2: Rollout ──
-    results = []
+    # ── Phase 2: Paired A/B Rollout ──
+    paired_results: list[dict[str, Any]] = []
 
     for task_id, vec_env in envs[suite_name].items():
         task_desc = vec_env.call("task_description")[0]  # type: ignore[attr-defined]
         n_tasks = len(envs[suite_name])
         print(f"\n=== Task {task_id + 1}/{n_tasks}: {task_desc} ===")
 
-        max_steps = vec_env.call("_max_episode_steps")[0]  # type: ignore[attr-defined]
-
         for ep in range(cfg.n_episodes):
-            observation, info = vec_env.reset(seed=[ep])  # type: ignore[arg-type]
-            policy.reset()
-            success = False
-            timestep_metrics: list[dict[str, Any]] = []
-            dist_history: list[float] = []
-            done = False
-            step = 0
-
-            for step in tqdm(
-                range(max_steps),
-                desc=f"  Episode {ep}",
-                leave=False,
-                disable=inside_slurm(),
-            ):
-                if done:
-                    break
-
-                observation = preprocess_observation(observation)
-                observation = add_envs_task(vec_env, observation)
-                observation = env_preprocessor(observation)
-                observation = preprocessor(observation)
-
-                with torch.inference_mode():
-                    action, stats = select_action_with_mahalanobis(
-                        policy,
-                        observation,
-                        gauss_mean,
-                        gauss_cov_inv,
-                        dist_histories=[dist_history],
-                        done=np.array([done]),
-                        intervene=cfg.intervene,
-                    )
-
-                if stats is not None:
-                    entry: dict[str, Any] = {
-                        "step": step,
-                        "mahalanobis": stats["mahalanobis"][0],
-                    }
-                    if cfg.intervene:
-                        entry["intervention"] = stats["intervention"]
-                    timestep_metrics.append(entry)
-
-                action = postprocessor(action)
-
-                action_transition = {ACTION: action}
-                action_transition = env_postprocessor(action_transition)
-                action_np = action_transition[ACTION].to("cpu").numpy()
-
-                observation, _, terminated, truncated, info = vec_env.step(action_np)
-
-                if "final_info" in info:
-                    if info["final_info"]["is_success"].item():
-                        success = True
-
-                done = bool(terminated | truncated)
-
-            if timestep_metrics:
-                mean_dist = np.mean([m["mahalanobis"] for m in timestep_metrics])
-                n_interventions = sum(
-                    1 for m in timestep_metrics if m.get("intervention", False)
-                )
-            else:
-                mean_dist = float("nan")
-                n_interventions = 0
-
-            episode_record = {
+            pair: dict[str, Any] = {
                 "task_id": task_id,
                 "task_description": task_desc,
                 "episode": ep,
-                "n_steps": step + 1,
-                "success": success,
-                "mean_mahalanobis": float(mean_dist),
-                "n_interventions": n_interventions,
-                "timesteps": timestep_metrics,
             }
-            results.append(episode_record)
 
-            msg = (
-                f"  Episode {ep}: {step + 1} steps, success={success}, "
-                f"mean_mahalanobis={mean_dist:.4f}"
-            )
-            if cfg.intervene:
-                msg += f", interventions={n_interventions}"
-            print(msg)
+            for condition in CONDITIONS:
+                intervene = condition == "intervene"
+                label = "intervene" if intervene else "control"
+
+                result = _run_episode(
+                    policy=policy,
+                    vec_env=vec_env,
+                    preprocessor=preprocessor,
+                    postprocessor=postprocessor,
+                    env_preprocessor=env_preprocessor,
+                    env_postprocessor=env_postprocessor,
+                    gauss_mean=gauss_mean,
+                    gauss_cov_inv=gauss_cov_inv,
+                    seed=ep,
+                    intervene=intervene,
+                    desc=f"  Ep {ep} ({label})",
+                )
+
+                pair[f"{condition}_success"] = result["success"]
+                pair[f"{condition}_n_steps"] = result["n_steps"]
+                pair[f"{condition}_mean_mahalanobis"] = result["mean_mahalanobis"]
+                pair[f"{condition}_n_interventions"] = result.get("n_interventions", 0)
+                pair[f"{condition}_timesteps"] = result["timesteps"]
+
+            # Print paired result
+            ctrl = "OK" if pair["control_success"] else "FAIL"
+            intv = "OK" if pair["intervene_success"] else "FAIL"
+            print(f"  Episode {ep}: control={ctrl}, intervene={intv}")
+
+            paired_results.append(pair)
 
         vec_env.close()
 
-    # Save results
+    # ── Save results ──
     output_path = output_dir / "eval_dist_results.json"
     with open(output_path, "w") as f:
-        json.dump(results, f, indent=2)
+        json.dump(paired_results, f, indent=2)
     print(f"\nResults saved to {output_path}")
 
-    # Summary
-    successes = [r["success"] for r in results]
-    print(f"\nOverall success rate: {sum(successes)}/{len(successes)}")
+    # ── Paired Statistical Analysis ──
+    n_total = len(paired_results)
+    ctrl_successes = sum(1 for p in paired_results if p["control_success"])
+    intv_successes = sum(1 for p in paired_results if p["intervene_success"])
+
+    print(f"\n{'=' * 60}")
+    print("PAIRED A/B RESULTS")
+    print(f"{'=' * 60}")
+    print(f"Total paired episodes: {n_total}")
     print(
-        f"Mean Mahalanobis distance: "
-        f"{np.mean([r['mean_mahalanobis'] for r in results]):.4f}"
+        f"Control success rate:    {ctrl_successes}/{n_total} "
+        f"({100 * ctrl_successes / n_total:.1f}%)"
     )
-    if cfg.intervene:
-        # False positives
-        total_interventions = sum(r["n_interventions"] for r in results)
-        success_interventions = sum(
-            r["n_interventions"] for r in results if r["success"]
-        )
+    print(
+        f"Intervene success rate:  {intv_successes}/{n_total} "
+        f"({100 * intv_successes / n_total:.1f}%)"
+    )
+    print(f"Delta: {100 * (intv_successes - ctrl_successes) / n_total:+.1f}pp")
+
+    # McNemar's test
+    mcnemar = _mcnemar_test(paired_results)
+    print("\nMcNemar's Test (paired binary outcomes):")
+    print(f"  Both succeed:             {mcnemar['concordant_both_success']}")
+    print(f"  Both fail:                {mcnemar['concordant_both_fail']}")
+    print(f"  Intervention helped:      {mcnemar['discordant_intervention_helped']}")
+    print(f"  Intervention hurt:        {mcnemar['discordant_intervention_hurt']}")
+    print(f"  Total discordant pairs:   {mcnemar['n_discordant']}")
+    if not np.isnan(mcnemar["chi2"]):
+        print(f"  Chi-squared:              {mcnemar['chi2']:.4f}")
+    print(f"  p-value:                  {mcnemar['p_value']:.4f}")
+
+    if mcnemar["p_value"] < 0.05:
+        if (
+            mcnemar["discordant_intervention_helped"]
+            > mcnemar["discordant_intervention_hurt"]
+        ):
+            print("  → Statistically significant: intervention HELPS (p < 0.05)")
+        else:
+            print("  → Statistically significant: intervention HURTS (p < 0.05)")
+    else:
+        print(f"  → Not statistically significant (p = {mcnemar['p_value']:.3f})")
+
+    # Per-task breakdown
+    task_ids = sorted(set(p["task_id"] for p in paired_results))
+    print("\nPer-task breakdown:")
+    print(f"  {'Task':<50} {'Ctrl':>5} {'Intv':>5} {'Delta':>6}")
+    print(f"  {'-' * 50} {'-' * 5} {'-' * 5} {'-' * 6}")
+    for tid in task_ids:
+        task_pairs = [p for p in paired_results if p["task_id"] == tid]
+        desc = task_pairs[0]["task_description"]
+        n = len(task_pairs)
+        c_s = sum(1 for p in task_pairs if p["control_success"])
+        i_s = sum(1 for p in task_pairs if p["intervene_success"])
+        delta = i_s - c_s
+        print(f"  {desc[:50]:<50} {c_s:>2}/{n:<2} {i_s:>2}/{n:<2} {delta:>+4}")
+
+    # Intervention diagnostics
+    total_interventions = sum(p["intervene_n_interventions"] for p in paired_results)
+    success_interventions = sum(
+        p["intervene_n_interventions"] for p in paired_results if p["intervene_success"]
+    )
+    if total_interventions > 0:
+        print("\nIntervention diagnostics:")
         print(
-            f"Interventions on successful episodes: "
+            f"  Interventions on successful episodes: "
             f"{success_interventions}/{total_interventions} "
             f"({100 * success_interventions / total_interventions:.1f}%)"
         )
-
-        # False negatives
+    n_failed = sum(1 for p in paired_results if not p["intervene_success"])
+    if n_failed > 0:
         failed_no_intervention = sum(
-            1 for r in results if not r["success"] and r["n_interventions"] == 0
+            1
+            for p in paired_results
+            if not p["intervene_success"] and p["intervene_n_interventions"] == 0
         )
-        n_failed = sum(1 for r in results if not r["success"])
         print(
-            f"Unsuccessful episodes with no intervention: "
+            f"  Failed episodes with no intervention: "
             f"{failed_no_intervention}/{n_failed} "
             f"({100 * failed_no_intervention / n_failed:.1f}%)"
         )
 
-    # Plot
-    plot_mahalanobis(results, output_dir)
+    # Save statistical summary
+    summary = {
+        "n_total": n_total,
+        "control_success_rate": ctrl_successes / n_total,
+        "intervene_success_rate": intv_successes / n_total,
+        "delta_pp": (intv_successes - ctrl_successes) / n_total * 100,
+        "mcnemar": mcnemar,
+    }
+    with open(output_dir / "statistical_summary.json", "w") as f:
+        json.dump(summary, f, indent=2)
+
+    # ── Plot ──
+    plot_mahalanobis(paired_results, output_dir)
 
 
 if __name__ == "__main__":

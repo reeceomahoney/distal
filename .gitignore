@@ -12,3 +12,4 @@ wheels/
 outputs
 .cache
 container.sif
+skypilot/

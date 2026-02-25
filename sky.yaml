@@ -1,0 +1,18 @@
+resources:
+  infra: slurm/htc/short
+  accelerators: L40S:1
+  cpus: 16
+  memory: 128
+
+workdir: .
+
+envs:
+  WANDB_API_KEY: ${WANDB_API_KEY}
+  HF_TOKEN: ${HF_TOKEN}
+
+run: |
+  singularity run --nv \
+    --env "WANDB_API_KEY=${WANDB_API_KEY}" \
+    --env "HF_TOKEN=${HF_TOKEN}" \
+    /data/engs-robotics-ml/kebl6123/piper_arm/container.sif \
+    python piper_arm/eval_dist.py

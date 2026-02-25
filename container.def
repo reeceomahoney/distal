@@ -35,12 +35,12 @@ From: python:3.10-slim
     export MUJOCO_GL=egl
     export PYOPENGL_PLATFORM=egl
     export PYTHONUNBUFFERED=1
-    export UV_CACHE_DIR=.cache/uv
-    export HF_HOME=.cache/huggingface
-    export LIBERO_CONFIG_PATH=.cache/libero
-    export WANDB_CACHE_DIR=.cache/wandb
+    export UV_CACHE_DIR=/data/engs-robotics-ml/kebl6123/piper_arm/.cache/uv
+    export HF_HOME=/data/engs-robotics-ml/kebl6123/piper_arm/.cache/huggingface
+    export LIBERO_CONFIG_PATH=/data/engs-robotics-ml/kebl6123/piper_arm/.cache/libero
+    export WANDB_CACHE_DIR=/data/engs-robotics-ml/kebl6123/piper_arm/.cache/wandb
     export TOKENIZERS_PARALLELISM=false
-    export TORCHINDUCTOR_CACHE_DIR=.cache/torchinductor
+    export TORCHINDUCTOR_CACHE_DIR=/data/engs-robotics-ml/kebl6123/piper_arm/.cache/torchinductor
 
 %runscript
     exec "$@"
