@@ -10,10 +10,9 @@ Phase 2: Roll out the policy in LIBERO and at each timestep compute the VLM
           distribution. Plot the distance over each trajectory.
 
           With --intervene: when the moving average of distances exceeds
-          INTERVENTION_K times the baseline (mean of the first MA_WINDOW
-          forward-pass distances), the new action chunk is blended with the
-          previous chunk (weighted by BLEND_ALPHA) to dampen erratic
-          predictions. Action chunk length is always n_action_steps.
+          INTERVENTION_THRESHOLD, the episode is reset and the policy
+          re-plans from scratch. The step counter keeps running so both
+          arms share the same total step budget.
 
 Usage:
     # Full run (embed dataset + rollout) with PI05:
@@ -264,45 +263,38 @@ def select_action_with_mahalanobis(
     gauss_cov_inv: np.ndarray,
     dist_histories: list[list[float]],
     done: np.ndarray,
-    prev_chunk: list[Optional[torch.Tensor]],
     intervene: bool = False,
 ) -> tuple[torch.Tensor, dict | None]:
-    """Like select_action but also returns Mahalanobis distance of the current obs.
+    """Like select_action but also returns Mahalanobis distance.
 
     Supports both PI05 and SmolVLA policies.
 
-    When intervene=True and OOD is detected, the previous action chunk is
-    reversed (negated deltas played in reverse order) to backtrack the robot
-    to its pre-chunk state, then the policy re-plans on the next forward pass.
+    When intervene=True, signals OOD via stats["intervention"] so the
+    caller can decide how to act (e.g. reset the episode).
     Action chunk length is always n_action_steps.
 
     Args:
-        dist_histories: Per-episode list of distances from forward passes so far
-                        this episode. Updated in-place. Reset between episodes.
-        prev_chunk: Single-element list holding the previous action chunk tensor
-                    (mutated in-place). Pass [None] at episode start.
+        dist_histories: Per-episode list of distances from forward
+            passes so far. Updated in-place.
 
     Returns:
         action: Single action tensor for env stepping.
-        stats: Dict with mahalanobis distance and intervention flag on forward-pass
-               steps, None on dequeue.
+        stats: Dict with mahalanobis distance and intervention flag
+               on forward-pass steps, None on dequeue.
     """
     policy.eval()
     action_queue = _get_action_queue(policy)
 
     stats = None
     if len(action_queue) == 0:
-        # Compute prefix embedding for Mahalanobis distance
-        emb = embed_prefix_pooled(policy, batch)  # (1, D)
+        emb = embed_prefix_pooled(policy, batch)
         emb_np = emb.cpu().numpy()
         dist = compute_mahalanobis_np(emb_np, gauss_mean, gauss_cov_inv)
 
-        # Update per-episode histories (skip done episodes)
         for i, d in enumerate(dist.tolist()):
             if not done[i]:
                 dist_histories[i].append(d)
 
-        # Intervene if any episode's moving average exceeds absolute threshold
         ood = False
         if intervene:
             for history in dist_histories:
@@ -314,18 +306,10 @@ def select_action_with_mahalanobis(
 
         stats = {"mahalanobis": dist.tolist(), "intervention": ood}
 
-        # Backtrack: reverse the previous chunk's deltas to undo recent motion,
-        # then let the next forward pass re-plan from the recovered state.
-        if ood and prev_chunk[0] is not None:
-            reversed_chunk = -prev_chunk[0].flip(dims=[1])
-            action_queue.extend(reversed_chunk.transpose(0, 1))
-            prev_chunk[0] = None
-        else:
-            action_chunk = policy.predict_action_chunk(batch)
-            n_steps = policy.config.n_action_steps
-            action_chunk = action_chunk[:, :n_steps]
-            prev_chunk[0] = action_chunk
-            action_queue.extend(action_chunk.transpose(0, 1))
+        action_chunk = policy.predict_action_chunk(batch)
+        n_steps = policy.config.n_action_steps
+        action_chunk = action_chunk[:, :n_steps]
+        action_queue.extend(action_chunk.transpose(0, 1))
 
     action = action_queue.popleft()
     return action, stats
@@ -468,16 +452,21 @@ def _run_episode(
     intervene: bool,
     desc: str = "",
 ) -> dict[str, Any]:
-    """Run a single episode and return the result record."""
+    """Run a single episode and return the result record.
+
+    When intervene=True and OOD is detected, the env is reset and the
+    policy re-plans from scratch. The step counter keeps running so
+    both arms share the same total step budget.
+    """
     max_steps = vec_env.call("_max_episode_steps")[0]  # type: ignore[attr-defined]
     observation, info = vec_env.reset(seed=[seed])  # type: ignore[arg-type]
     policy.reset()
     success = False
     timestep_metrics: list[dict[str, Any]] = []
     dist_history: list[float] = []
-    prev_chunk: list[Optional[torch.Tensor]] = [None]
     done = False
     step = 0
+    n_resets = 0
 
     for step in tqdm(
         range(max_steps),
@@ -501,7 +490,6 @@ def _run_episode(
                 gauss_cov_inv,
                 dist_histories=[dist_history],
                 done=np.array([done]),
-                prev_chunk=prev_chunk,
                 intervene=intervene,
             )
 
@@ -513,6 +501,17 @@ def _run_episode(
             if intervene:
                 entry["intervention"] = stats["intervention"]
             timestep_metrics.append(entry)
+
+            # Reset-and-retry with a new seed for different init state
+            if stats["intervention"]:
+                n_resets += 1
+                retry_seed = seed + n_resets * 10000
+                observation, info = vec_env.reset(seed=[retry_seed])  # type: ignore[arg-type]
+                policy.reset()
+                dist_history.clear()
+                action_queue = _get_action_queue(policy)
+                action_queue.clear()
+                continue
 
         action = postprocessor(action)
 
@@ -530,9 +529,7 @@ def _run_episode(
 
     if timestep_metrics:
         mean_dist = np.mean([m["mahalanobis"] for m in timestep_metrics])
-        n_interventions = sum(
-            1 for m in timestep_metrics if m.get("intervention", False)
-        )
+        n_interventions = sum(1 for m in timestep_metrics if m.get("intervention"))
     else:
         mean_dist = float("nan")
         n_interventions = 0
@@ -542,6 +539,7 @@ def _run_episode(
         "success": success,
         "mean_mahalanobis": float(mean_dist),
         "n_interventions": n_interventions,
+        "n_resets": n_resets,
         "timesteps": timestep_metrics,
     }
 
