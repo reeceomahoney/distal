@@ -41,6 +41,7 @@ from lerobot.utils.utils import inside_slurm
 from tqdm import tqdm
 
 from piper_arm.eval_dist import (
+    MA_WINDOW,
     _get_action_queue,
     compute_mahalanobis_np,
     embed_prefix_pooled,
@@ -170,17 +171,57 @@ def _run_episode_capture(
     }
 
 
+def _plot_traces(results: list[dict], output_dir: Path) -> None:
+    """Plot per-episode Mahalanobis distance traces colored by success/failure."""
+    import matplotlib.pyplot as plt
+    from matplotlib.lines import Line2D
+
+    fig, ax = plt.subplots(figsize=(12, 6))
+
+    for result in results:
+        steps = np.array(result["trace_steps"])
+        dists = np.array(result["trace_distances"])
+        color = "#2ecc71" if result["success"] else "#e74c3c"
+
+        if len(dists) >= MA_WINDOW:
+            kernel = np.ones(MA_WINDOW) / MA_WINDOW
+            ma_dists = np.convolve(dists, kernel, mode="valid")
+            ma_steps = steps[MA_WINDOW - 1 :]
+        else:
+            ma_dists = dists
+            ma_steps = steps
+
+        ax.plot(ma_steps, ma_dists, color=color, alpha=0.7, linewidth=1.0)
+
+    handles = [
+        Line2D([0], [0], color="#2ecc71", label="Success"),
+        Line2D([0], [0], color="#e74c3c", label="Failure"),
+    ]
+    ax.legend(handles=handles, fontsize=8)
+    ax.set_xlabel("Timestep")
+    ax.set_ylabel(f"Mahalanobis Distance (MA, w={MA_WINDOW})")
+    ax.set_title("Mahalanobis Distance of VLM Prefix Embeddings")
+    ax.grid(True, alpha=0.3)
+    fig.tight_layout()
+
+    plot_path = output_dir / "eval_trace.png"
+    fig.savefig(plot_path, dpi=150)
+    print(f"\nPlot saved to {plot_path}")
+    plt.close(fig)
+
+
 @dataclass
 class EvalTraceConfig:
     policy_path: str = "reece-omahoney/smolvla-libero-16-chunk"
     dataset: str = "reece-omahoney/libero"
-    n_episodes: int = 1
+    n_episodes: int = 50
     batch_size: int = 32
     num_workers: int = 8
     load_stats: Optional[str] = os.path.join(
         os.environ.get("OUTPUT_DIR", "outputs"),
         "eval_dist/2026-02-24/17-07-42/gauss_stats.npz",
     )
+    save_videos: bool = False
     output_dir: str = os.path.join(
         os.environ.get("OUTPUT_DIR", "outputs"), "eval_trace"
     )
@@ -240,6 +281,7 @@ def main(cfg: EvalTraceConfig):
 
     # ── Phase 2: Rollout with capture ──
     summary_entries: list[dict[str, Any]] = []
+    all_results: list[dict[str, Any]] = []
 
     for task_id, vec_env in envs[suite_name].items():
         task_desc = vec_env.call("task_description")[0]
@@ -260,10 +302,11 @@ def main(cfg: EvalTraceConfig):
                 desc=f"  Ep {ep}",
             )
 
-            # Save videos
-            for name in CAMERA_KEYS.values():
-                video_path = output_dir / f"episode_{ep}_{name}.mp4"
-                _write_video(result["camera_frames"][name], video_path)
+            # Save videos (optional)
+            if cfg.save_videos:
+                for name in CAMERA_KEYS.values():
+                    video_path = output_dir / f"episode_{ep}_{name}.mp4"
+                    _write_video(result["camera_frames"][name], video_path)
 
             # Save trace
             trace_path = output_dir / f"episode_{ep}_trace.npz"
@@ -290,6 +333,7 @@ def main(cfg: EvalTraceConfig):
                     "mean_distance": result["mean_distance"],
                 }
             )
+            all_results.append(result)
 
         vec_env.close()
 
@@ -298,6 +342,9 @@ def main(cfg: EvalTraceConfig):
         json.dump(summary_entries, f, indent=2)
 
     print(f"\nOutputs saved to {output_dir}")
+
+    # ── Plot ──
+    _plot_traces(all_results, output_dir)
 
 
 if __name__ == "__main__":
