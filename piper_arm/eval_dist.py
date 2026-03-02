@@ -24,6 +24,7 @@ Usage:
         --n-episodes 3
 """
 
+from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -226,15 +227,6 @@ def fit_gaussian_from_dataset(
 MA_WINDOW = 10
 
 
-def _get_action_queue(policy: Union[PI05Policy, SmolVLAPolicy]):
-    """Return the action deque for the given policy type."""
-    if isinstance(policy, PI05Policy):
-        return policy._action_queue
-    elif isinstance(policy, SmolVLAPolicy):
-        return policy._queues[ACTION]
-    raise TypeError(f"Unsupported policy type: {type(policy)}")
-
-
 def build_frame(
     obs: dict[str, Any], action: torch.Tensor, features: dict[str, dict]
 ) -> dict[str, Any]:
@@ -284,14 +276,11 @@ def _run_episode_capture(
 
     success = False
     done = False
-    step = 0
-    trace_steps: list[int] = []
     trace_distances: list[float] = []
-    dist_history: list[float] = []
-    actions: list[np.ndarray] = []
+    actions: list[torch.Tensor] = []
     observations: list[dict[str, torch.Tensor]] = []
 
-    for step in tqdm(
+    for _ in tqdm(
         range(max_steps),
         desc=desc,
         leave=False,
@@ -303,38 +292,26 @@ def _run_episode_capture(
         observation = preprocess_observation(observation)
         observation = add_envs_task(vec_env, observation)
         observation = env_preprocessor(observation)
-
-        observations.append(
-            {
-                k: v[0].cpu() if isinstance(v, torch.Tensor) else v
-                for k, v in observation.items()
-            }
-        )
-
+        raw_obs = deepcopy(observation)
         observation = preprocessor(observation)
 
         with torch.inference_mode():
-            policy.eval()
-            action_queue = _get_action_queue(policy)
+            emb = embed_prefix_pooled(policy, observation)
+            emb_np = emb.cpu().numpy()
+            dist = compute_mahalanobis_np(emb_np, gauss_mean, gauss_cov_inv)
+            dist_val = dist[0].item()
+            trace_distances.append(dist_val)
+            action = policy.select_action(observation)
 
-            if len(action_queue) == 0:
-                emb = embed_prefix_pooled(policy, observation)
-                emb_np = emb.cpu().numpy()
-                dist = compute_mahalanobis_np(emb_np, gauss_mean, gauss_cov_inv)
-
-                dist_val = dist[0].item()
-                dist_history.append(dist_val)
-                trace_steps.append(step)
-                trace_distances.append(dist_val)
-
-                action_chunk = policy.predict_action_chunk(observation)
-                n_action_steps = policy.config.n_action_steps
-                action_chunk = action_chunk[:, :n_action_steps]
-                action_queue.extend(action_chunk.transpose(0, 1))
-
-            action = action_queue.popleft()
-
+        # Save frame data
+        raw_obs = {
+            k: v[0].cpu() if isinstance(v, torch.Tensor) else v
+            for k, v in raw_obs.items()
+        }
+        raw_obs["maha_distance"] = dist_val
+        observations.append(raw_obs)
         actions.append(action[0].cpu())
+
         action = postprocessor(action)
         action_transition = {ACTION: action}
         action_transition = env_postprocessor(action_transition)
@@ -348,13 +325,8 @@ def _run_episode_capture(
 
         done = bool(terminated | truncated)
 
-    mean_dist = float(np.mean(trace_distances)) if trace_distances else float("nan")
-
     return {
         "success": success,
-        "n_steps": step + 1 if max_steps > 0 else 0,
-        "mean_distance": mean_dist,
-        "trace_steps": trace_steps,
         "trace_distances": trace_distances,
         "actions": actions,
         "observations": observations,
@@ -374,7 +346,7 @@ def _plot_traces(results: list[dict], output_dir: Path) -> None:
     fig, ax = plt.subplots(figsize=(12, 6))
 
     for result in results:
-        steps = np.array(result["trace_steps"])
+        steps = np.arange(len(result["trace_distances"]))
         dists = np.array(result["trace_distances"])
         color = "#2ecc71" if result["success"] else "#e74c3c"
 
@@ -478,6 +450,8 @@ def main(cfg: EvalDistConfig):
     # ── Dataset setup ──
     dataset = None
     if cfg.dataset_repo_id:
+        features = base_dataset.meta.features.copy()
+        features["maha_distance"] = {"dtype": "float32", "shape": (1,), "names": None}
         dataset = LeRobotDataset.create(
             repo_id=cfg.dataset_repo_id,
             fps=int(base_dataset.meta.fps),
@@ -486,7 +460,6 @@ def main(cfg: EvalDistConfig):
         )
 
     # ── Phase 2: Rollout with capture ──
-    summary_entries: list[dict[str, Any]] = []
     all_results: list[dict[str, Any]] = []
 
     try:
@@ -522,22 +495,7 @@ def main(cfg: EvalDistConfig):
                     dataset.save_episode()
 
                 status = "OK" if result["success"] else "FAIL"
-                print(
-                    f"  Episode {ep}: {status} | "
-                    f"{result['n_steps']} steps | "
-                    f"mean_dist={result['mean_distance']:.2f}"
-                )
-
-                summary_entries.append(
-                    {
-                        "episode": ep,
-                        "task_id": task_id,
-                        "task_description": task_desc,
-                        "success": result["success"],
-                        "n_steps": result["n_steps"],
-                        "mean_distance": result["mean_distance"],
-                    }
-                )
+                print(f"  Episode {ep}: {status}")
                 all_results.append(result)
 
             vec_env.close()
