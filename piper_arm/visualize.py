@@ -1,4 +1,4 @@
-"""Rerun visualization for rollout traces captured by eval_trace.
+"""Rerun visualization for rollout traces captured by eval_dist.
 
 Loads saved MP4 videos and NPZ distance traces, then displays them in the
 Rerun viewer with synced timeline (step number).
@@ -6,11 +6,11 @@ Rerun viewer with synced timeline (step number).
 Usage:
     # Visualize all episodes in a trace directory:
     python -m piper_arm.visualize \
-        --trace-dir outputs/eval_trace/latest
+        --trace-dir outputs/eval_dist/latest
 
     # Visualize a specific episode:
     python -m piper_arm.visualize \
-        --trace-dir outputs/eval_trace/latest \
+        --trace-dir outputs/eval_dist/latest \
         --episode 0
 """
 
@@ -96,7 +96,7 @@ def visualize_episode(
 
 @dataclass
 class VisualizeConfig:
-    trace_dir: str = "outputs/eval_trace/latest"
+    trace_dir: str = "outputs/eval_dist/latest"
     episode: Optional[int] = None
     port: int = 9876
 
@@ -135,7 +135,7 @@ def main(cfg: VisualizeConfig):
 
     # Spawn the viewer once, then send each episode as a separate
     # recording so they appear in the recording selector.
-    rr.init("eval_trace", spawn=True)
+    rr.init("eval_dist", spawn=True)
     addr = f"rerun+http://127.0.0.1:{cfg.port}/proxy"
 
     for ep in episodes:
