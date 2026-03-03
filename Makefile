@@ -1,4 +1,4 @@
-.PHONY: train finetune eval record play gui gui-start gui-stop container
+.PHONY: train finetune eval train-value record play gui gui-start gui-stop container
 
 ############
 # Training #
@@ -17,6 +17,9 @@ finetune:
 eval:
 	lerobot-eval --config_path configs/eval.yaml \
 		--policy.path=lerobot/pi05_libero_finetuned
+
+train-value:
+	python piper_arm/train_value.py --config_path configs/value.yaml
 
 ############
 # Hardware #
