@@ -24,6 +24,7 @@ Usage:
         --n-episodes 3
 """
 
+import os
 from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime
@@ -247,7 +248,7 @@ def build_frame(
     return frame
 
 
-def _run_episode_capture(
+def rollout(
     policy: Union[PI05Policy, SmolVLAPolicy],
     vec_env: Any,
     preprocessor: Any,
@@ -308,7 +309,7 @@ def _run_episode_capture(
             k: v[0].cpu() if isinstance(v, torch.Tensor) else v
             for k, v in raw_obs.items()
         }
-        raw_obs["maha_distance"] = dist_val
+        raw_obs["maha_distance"] = np.array([dist_val], dtype=np.float32)
         observations.append(raw_obs)
         actions.append(action[0].cpu())
 
@@ -386,16 +387,17 @@ def _plot_traces(results: list[dict], output_dir: Path) -> None:
 class EvalDistConfig:
     policy_path: str = "reece-omahoney/smolvla-libero-16-chunk"
     base_dataset_repo_id: str = "reece-omahoney/libero"
-    n_episodes: int = 50
+    n_episodes: int = 150
     batch_size: int = 32
     num_workers: int = 8
     load_stats: str | None = "outputs/eval_dist/2026-03-02/13-11-13/gauss_stats.npz"
-    dataset_repo_id: str | None = "reece-omahoney/rollout-dataset"
+    dataset_repo_id: str | None = "reece-omahoney/libero-10-maha"
     output_dir: str = "outputs/eval_dist"
 
 
 @draccus.wrap()  # type: ignore[misc]
 def main(cfg: EvalDistConfig):
+    os.environ["SVT_LOG"] = "1"
     # ── Load policy ──
     suite_name = "libero_10"
     env_cfg = LiberoEnvConfig(suite_name, fps=10, task_ids=[9])
@@ -452,10 +454,12 @@ def main(cfg: EvalDistConfig):
     if cfg.dataset_repo_id:
         features = base_dataset.meta.features.copy()
         features["maha_distance"] = {"dtype": "float32", "shape": (1,), "names": None}
+        features["steps_remaining"] = {"dtype": "int32", "shape": (1,), "names": None}
+        features["success"] = {"dtype": "bool", "shape": (1,), "names": None}
         dataset = LeRobotDataset.create(
             repo_id=cfg.dataset_repo_id,
             fps=int(base_dataset.meta.fps),
-            features=base_dataset.meta.features,
+            features=features,
             root=output_dir / "dataset",
         )
 
@@ -469,7 +473,7 @@ def main(cfg: EvalDistConfig):
             print(f"\n=== Task {task_id + 1}/{n_tasks}: {task_desc} ===")
 
             for ep in range(cfg.n_episodes):
-                result = _run_episode_capture(
+                result = rollout(
                     policy=policy,
                     vec_env=vec_env,
                     preprocessor=preprocessor,
@@ -484,13 +488,18 @@ def main(cfg: EvalDistConfig):
 
                 # Build LeRobot dataset incrementally
                 if dataset is not None:
-                    for frame_idx in range(len(result["observations"])):
+                    n_frames = len(result["observations"])
+                    for frame_idx in range(n_frames):
                         frame = build_frame(
                             result["observations"][frame_idx],
                             result["actions"][frame_idx],
                             dataset.meta.features,
                         )
                         frame["task"] = task_desc
+                        frame["steps_remaining"] = np.array(
+                            [n_frames - frame_idx - 1], dtype=np.int32
+                        )
+                        frame["success"] = np.array([result["success"]], dtype=bool)
                         dataset.add_frame(frame)
                     dataset.save_episode()
 
