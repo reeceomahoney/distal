@@ -15,10 +15,10 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 @dataclass
 class SlurmConfig:
-    command: str = "python piper_arm/eval_dist.py"
+    command: str = "make train-advantage"
 
     # SLURM options
-    time: int = 1
+    time: int = 3
     gpu: str = "l40s"
     ngpu: int = 1
     cpus: int = 16
