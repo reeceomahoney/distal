@@ -9,7 +9,9 @@ Usage:
     python piper_arm/train_advantage.py --config_path configs/advantage.yaml
 """
 
+from contextlib import contextmanager
 from dataclasses import dataclass
+from functools import wraps
 from pathlib import Path
 
 import draccus
@@ -83,6 +85,78 @@ class AdvantageEmbedding(nn.Module):
             (B, 1, hidden_size) embedding.
         """
         return self.embedding(labels).unsqueeze(1)
+
+
+@contextmanager
+def advantage_inference(policy: SmolVLAPolicy, adv_embedding: AdvantageEmbedding):
+    """Patch policy to inject advantage token (always=1) during inference."""
+    model = policy.model
+    original_sample_actions = model.sample_actions
+
+    @wraps(original_sample_actions)
+    def patched_sample_actions(
+        images, img_masks, lang_tokens, lang_masks, state, noise=None, **kwargs
+    ):
+        bsize = state.shape[0]
+        device = state.device
+
+        if noise is None:
+            shape = (bsize, model.config.chunk_size, model.config.max_action_dim)
+            noise = model.sample_noise(shape, device)
+
+        # Embed prefix as usual
+        prefix_embs, prefix_pad_masks, prefix_att_masks = model.embed_prefix(
+            images, img_masks, lang_tokens, lang_masks, state=state
+        )
+
+        # Inject advantage token (always positive=1)
+        pos = torch.ones(bsize, dtype=torch.long, device=device)
+        adv_embs = adv_embedding(pos).to(dtype=prefix_embs.dtype)
+        att_dtype = prefix_att_masks.dtype
+        pad_dtype = prefix_pad_masks.dtype
+        adv_att = torch.ones(bsize, 1, dtype=att_dtype, device=device)
+        adv_pad = torch.ones(bsize, 1, dtype=pad_dtype, device=device)
+
+        prefix_embs = torch.cat([prefix_embs, adv_embs], dim=1)
+        prefix_pad_masks = torch.cat([prefix_pad_masks, adv_pad], dim=1)
+        prefix_att_masks = torch.cat([prefix_att_masks, adv_att], dim=1)
+
+        # KV cache forward
+        prefix_att_2d_masks = make_att_2d_masks(prefix_pad_masks, prefix_att_masks)
+        prefix_position_ids = torch.cumsum(prefix_pad_masks, dim=1) - 1
+        _, past_key_values = model.vlm_with_expert.forward(
+            attention_mask=prefix_att_2d_masks,
+            position_ids=prefix_position_ids,
+            past_key_values=None,
+            inputs_embeds=[prefix_embs, None],
+            use_cache=model.config.use_cache,
+            fill_kv_cache=True,
+        )
+
+        # Denoising loop
+        num_steps = model.config.num_steps
+        dt = -1.0 / num_steps
+        x_t = noise
+        for step in range(num_steps):
+            time = 1.0 + step * dt
+            time_tensor = torch.tensor(time, dtype=torch.float32, device=device).expand(
+                bsize
+            )
+            v_t = model.denoise_step(
+                x_t=x_t,
+                prefix_pad_masks=prefix_pad_masks,
+                past_key_values=past_key_values,
+                timestep=time_tensor,
+            )
+            x_t = x_t + dt * v_t
+
+        return x_t
+
+    model.sample_actions = patched_sample_actions
+    try:
+        yield
+    finally:
+        model.sample_actions = original_sample_actions
 
 
 def load_value_model(
@@ -463,7 +537,7 @@ def main(cfg: TrainAdvantageConfig):
         if eval_env and cfg.eval_freq > 0 and step % cfg.eval_freq == 0:
             print(f"\n[step {step}] Running evaluation...")
             policy.eval()
-            with torch.no_grad():
+            with torch.no_grad(), advantage_inference(policy, adv_embedding):
                 eval_info = eval_policy_all(
                     envs=eval_env,
                     policy=policy,
