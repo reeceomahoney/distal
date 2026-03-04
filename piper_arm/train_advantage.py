@@ -9,7 +9,6 @@ Usage:
     python piper_arm/train_advantage.py --config_path configs/advantage.yaml
 """
 
-import itertools
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -18,6 +17,7 @@ import torch
 import torch.nn.functional as F
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
+from lerobot.datasets.utils import cycle
 from lerobot.envs.configs import LiberoEnv as LiberoEnvConfig
 from lerobot.envs.factory import make_env, make_env_pre_post_processors
 from lerobot.envs.utils import close_envs
@@ -30,6 +30,7 @@ from lerobot.policies.smolvla.modeling_smolvla import (
     resize_with_pad,
 )
 from lerobot.scripts.lerobot_eval import eval_policy_all
+from lerobot.utils.constants import OBS_LANGUAGE_ATTENTION_MASK, OBS_LANGUAGE_TOKENS
 from torch import Tensor, nn
 from torch.utils.data import DataLoader
 
@@ -237,8 +238,8 @@ def advantage_forward(
     # Prepare inputs using policy's preprocessing
     images, img_masks = policy.prepare_images(batch)
     state = policy.prepare_state(batch)
-    lang_tokens = batch["observation.language_tokens"]
-    lang_masks = batch["observation.language_attention_mask"]
+    lang_tokens = batch[OBS_LANGUAGE_TOKENS]
+    lang_masks = batch[OBS_LANGUAGE_ATTENTION_MASK]
     actions = policy.prepare_action(batch)
 
     # Sample noise and time for flow matching
@@ -315,7 +316,16 @@ def main(cfg: TrainAdvantageConfig):
         wandb.init(project=cfg.wandb_project, name=cfg.wandb_run_name, config=vars(cfg))  # type: ignore[arg-type]
 
     # ── Dataset ──
-    ds_kwargs: dict = {"repo_id": cfg.dataset_repo_id}
+    # Load policy config first to get chunk_size for delta_timestamps
+    policy_cfg = PreTrainedConfig.from_pretrained(cfg.policy_repo_id)
+    fps = LeRobotDataset(repo_id=cfg.dataset_repo_id, episodes=[0]).fps
+    delta_timestamps = {
+        "action": [i / fps for i in policy_cfg.action_delta_indices],
+    }
+    ds_kwargs: dict = {
+        "repo_id": cfg.dataset_repo_id,
+        "delta_timestamps": delta_timestamps,
+    }
     if cfg.dataset_root:
         ds_kwargs["root"] = cfg.dataset_root
     dataset = LeRobotDataset(**ds_kwargs)
@@ -364,6 +374,12 @@ def main(cfg: TrainAdvantageConfig):
         drop_last=True,
     )
 
+    policy_cfg.pretrained_path = Path(cfg.policy_repo_id)
+    preprocessor, postprocessor = make_pre_post_processors(
+        policy_cfg=policy_cfg,
+        pretrained_path=str(policy_cfg.pretrained_path),
+    )
+
     # ── Pre-compute value predictions for advantage labels ──
     # We need the value model's tokenizer for threshold computation, but during
     # training the policy uses its own lang_tokens from the dataset directly.
@@ -372,37 +388,28 @@ def main(cfg: TrainAdvantageConfig):
 
     # ── Eval environment (LIBERO) ──
     eval_env = None
-    preprocessor = None
-    postprocessor = None
     env_preprocessor = None
     env_postprocessor = None
     if cfg.eval_freq > 0:
         print("Setting up LIBERO eval environment...")
         env_cfg = LiberoEnvConfig("libero_10", fps=10, task_ids=[9])
         eval_env = make_env(env_cfg, n_envs=cfg.eval_batch_size)
-
-        policy_cfg = PreTrainedConfig.from_pretrained(cfg.policy_repo_id)
-        policy_cfg.pretrained_path = Path(cfg.policy_repo_id)
-
-        preprocessor, postprocessor = make_pre_post_processors(
-            policy_cfg=policy_cfg,
-            pretrained_path=str(policy_cfg.pretrained_path),
-        )
         env_preprocessor, env_postprocessor = make_env_pre_post_processors(
             env_cfg, policy_cfg
         )
 
     # ── Training loop ──
-    data_iter = iter(itertools.cycle(loader))  # type: ignore[arg-type]
+    data_iter = cycle(loader)
 
     for step in range(1, cfg.total_steps + 1):
         batch = next(data_iter)
-
-        # Move batch to device
-        batch = {
-            k: v.to(device) if isinstance(v, torch.Tensor) else v
-            for k, v in batch.items()
+        extra_keys = {
+            k: batch[k]
+            for k in ("maha_distance", "steps_remaining", "success")
+            if k in batch
         }
+        batch = preprocessor(batch)
+        batch.update(extra_keys)
 
         # Compute advantage labels for this batch
         with torch.no_grad():
