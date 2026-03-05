@@ -1172,6 +1172,21 @@ smolvla = [
 ]
 
 [[package]]
+name = "lerobot-policy-advantage"
+version = "0.1.0"
+source = { directory = "lerobot_policy_advantage" }
+dependencies = [
+    { name = "lerobot", extra = ["smolvla"] },
+    { name = "piper-arm" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "lerobot", extras = ["smolvla"], git = "https://github.com/huggingface/lerobot.git" },
+    { name = "piper-arm" },
+]
+
+[[package]]
 name = "lerobot-robot-piper"
 version = "0.1.0"
 source = { directory = "lerobot_robot_piper" }
@@ -1770,6 +1785,7 @@ source = { editable = "." }
 dependencies = [
     { name = "fabric" },
     { name = "lerobot", extra = ["libero", "smolvla"] },
+    { name = "lerobot-policy-advantage" },
     { name = "matplotlib" },
     { name = "opencv-contrib-python" },
     { name = "piper-sdk" },
@@ -1800,6 +1816,7 @@ requires-dist = [
     { name = "fabric", specifier = ">=3.2.2" },
     { name = "flask", marker = "extra == 'gui'", specifier = ">=3.0" },
     { name = "lerobot", extras = ["smolvla", "libero"], git = "https://github.com/huggingface/lerobot.git" },
+    { name = "lerobot-policy-advantage", directory = "lerobot_policy_advantage" },
     { name = "matplotlib", specifier = ">=3.7.0" },
     { name = "opencv-contrib-python", specifier = ">=4.12.0.88" },
     { name = "piper-sdk", specifier = ">=0.6.1" },

@@ -14,6 +14,7 @@ dependencies = [
   "scikit-learn>=1.3.0",
   "fabric>=3.2.2",
   "rerun-sdk>=0.22",
+  "lerobot_policy_advantage",
 ]
 
 [dependency-groups]
@@ -33,6 +34,7 @@ build-backend = "hatchling.build"
 [tool.uv.sources]
 lerobot_robot_piper = { path = "lerobot_robot_piper" }
 lerobot_teleoperator_piper = { path = "lerobot_teleoperator_piper" }
+lerobot_policy_advantage = { path = "lerobot_policy_advantage" }
 
 [tool.hatch.metadata]
 allow-direct-references = true
