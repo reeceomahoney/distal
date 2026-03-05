@@ -5,7 +5,7 @@ binarizes per-sample advantages. Adds an `advantage_label` column to the
 dataset's underlying HuggingFace dataset and saves/pushes the result.
 
 Usage:
-    python -m piper_arm.compute_advantage_labels --config_path configs/advantage.yaml
+    python -m piper_arm.compute_advantage_labels
 """
 
 from dataclasses import dataclass
