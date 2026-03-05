@@ -60,5 +60,5 @@ REMOTE_HOST := htc
 REMOTE_PATH := /data/engs-robotics-ml/kebl6123/piper_arm
 
 container:
-	singularity build --fakeroot container.sif container.def
+	singularity build --force --fakeroot container.sif container.def
 	scp container.sif $(REMOTE_HOST):$(REMOTE_PATH)/container.sif
