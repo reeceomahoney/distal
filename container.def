@@ -6,6 +6,7 @@ From: python:3.10-slim
     uv.lock /opt/piper_arm/uv.lock
     README.md /opt/piper_arm/README.md
     piper_arm /opt/piper_arm/piper_arm
+    lerobot_policy_advantage /opt/piper_arm/lerobot_policy_advantage
 
     # To get EGL working
     egl_vendor.d/10_nvidia.json /usr/share/glvnd/egl_vendor.d/10_nvidia.json
@@ -21,10 +22,6 @@ From: python:3.10-slim
     curl -LsSf https://astral.sh/uv/install.sh | sh
     export PATH="/root/.local/bin:$PATH"
     cd /opt/piper_arm && uv sync --frozen
-
-    # Pi specific install
-    uv pip uninstall transformers
-    uv pip install "lerobot[pi] @ git+https://github.com/huggingface/lerobot.git"
 
     # Suppress robotsuite warning
     /opt/piper_arm/.venv/bin/python -m robosuite.scripts.setup_macros
