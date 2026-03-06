@@ -100,9 +100,9 @@ def rollout(
         }
         raw_obs["maha_distance"] = np.array([dist_val], dtype=np.float32)
         observations.append(raw_obs)
-        actions.append(action[0].cpu())
 
         action = postprocessor(action)
+        actions.append(action[0].cpu())
         action_transition = {ACTION: action}
         action_transition = env_postprocessor(action_transition)
         action_np = action_transition[ACTION].to("cpu").numpy()
