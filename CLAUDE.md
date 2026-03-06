@@ -78,7 +78,6 @@ YAML configs in `configs/` drive all workflows:
 
 - `train.yaml` — Dataset, policy type, training hyperparameters, W&B logging
 - `eval.yaml` — Evaluation settings (policy args via CLI override)
-- `value.yaml` — Value function training (dataset, SmolVLM model, expert scaling, bin count)
 - `advantage_train.yaml` — Advantage-conditioned policy fine-tuning (policy repo, advantage dropout, eval settings)
 - `play.yaml` / `record.yaml` — Hardware interaction settings
 

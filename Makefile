@@ -18,9 +18,6 @@ eval:
 	lerobot-eval --config_path configs/eval.yaml \
 		--policy.path=reece-omahoney/smolvla-libero-16-chunk
 
-train-value:
-	python -m piper_arm.train_value --config_path configs/value.yaml
-
 train-advantage:
 	lerobot-train --config_path configs/advantage_train.yaml
 
