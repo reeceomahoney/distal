@@ -117,6 +117,7 @@ def main(cfg: EvalDistConfig):
             repo_id=cfg.dataset_repo_id,
             fps=int(base_dataset.meta.fps),
             features=features,
+            image_writer_threads=4 * len(base_dataset.meta.camera_keys),
         )
 
     # ── Phase 2: Rollout with capture ──
