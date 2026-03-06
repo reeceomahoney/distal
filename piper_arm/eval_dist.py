@@ -117,7 +117,6 @@ def main(cfg: EvalDistConfig):
             repo_id=cfg.dataset_repo_id,
             fps=int(base_dataset.meta.fps),
             features=features,
-            root=output_dir / "dataset",
         )
 
     # ── Phase 2: Rollout with capture ──
