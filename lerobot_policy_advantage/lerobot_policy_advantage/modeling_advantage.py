@@ -119,9 +119,6 @@ class AdvantagePolicy(PreTrainedPolicy):
         lang_masks = batch[OBS_LANGUAGE_ATTENTION_MASK]
         actions = self.prepare_action(batch)
 
-        # Read pre-computed advantage labels
-        adv_labels = batch["advantage_label"].long().to(actions.device)
-
         # Flow matching: sample noise and time
         if noise is None:
             noise = model.sample_noise(actions.shape, actions.device)
@@ -139,27 +136,37 @@ class AdvantagePolicy(PreTrainedPolicy):
         bsize = prefix_embs.shape[0]
         device = prefix_embs.device
 
-        # 2. Embed advantage token
-        adv_embs = self.adv_embedding(adv_labels).to(dtype=prefix_embs.dtype)
-        adv_att_masks = torch.ones(
-            bsize, 1, dtype=prefix_att_masks.dtype, device=device
-        )
+        if self.config.use_advantage_tokens:
+            # Read pre-computed advantage labels
+            adv_labels = batch["advantage_label"].long().to(device)
 
-        # Apply advantage dropout (mask out advantage_dropout fraction)
-        dropout_mask = torch.rand(bsize, device=device) > self.config.advantage_dropout
-        adv_pad_masks = dropout_mask.unsqueeze(1)  # (B, 1)
+            # 2. Embed advantage token
+            adv_embs = self.adv_embedding(adv_labels).to(dtype=prefix_embs.dtype)
+            adv_att_masks = torch.ones(
+                bsize, 1, dtype=prefix_att_masks.dtype, device=device
+            )
 
-        # 3. Concatenate prefix + advantage
-        prefix_adv_embs = torch.cat([prefix_embs, adv_embs], dim=1)
-        prefix_adv_pad_masks = torch.cat([prefix_pad_masks, adv_pad_masks], dim=1)
-        prefix_adv_att_masks = torch.cat([prefix_att_masks, adv_att_masks], dim=1)
+            # Apply advantage dropout (mask out advantage_dropout fraction)
+            dropout_mask = (
+                torch.rand(bsize, device=device) > self.config.advantage_dropout
+            )
+            adv_pad_masks = dropout_mask.unsqueeze(1)  # (B, 1)
+
+            # 3. Concatenate prefix + advantage
+            prefix_embs = torch.cat([prefix_embs, adv_embs], dim=1)
+            prefix_pad_masks = torch.cat([prefix_pad_masks, adv_pad_masks], dim=1)
+            prefix_att_masks = torch.cat([prefix_att_masks, adv_att_masks], dim=1)
+
+            adv_labels_for_log = adv_labels
+        else:
+            adv_labels_for_log = None
 
         # 4. Embed suffix (noisy actions + time)
         suffix_embs, suffix_pad_masks, suffix_att_masks = model.embed_suffix(x_t, time)
 
-        # 5. Full sequence: prefix + advantage + suffix
-        pad_masks = torch.cat([prefix_adv_pad_masks, suffix_pad_masks], dim=1)
-        att_masks = torch.cat([prefix_adv_att_masks, suffix_att_masks], dim=1)
+        # 5. Full sequence: prefix [+ advantage] + suffix
+        pad_masks = torch.cat([prefix_pad_masks, suffix_pad_masks], dim=1)
+        att_masks = torch.cat([prefix_att_masks, suffix_att_masks], dim=1)
 
         att_2d_masks = make_att_2d_masks(pad_masks, att_masks)
         position_ids = torch.cumsum(pad_masks, dim=1) - 1
@@ -169,7 +176,7 @@ class AdvantagePolicy(PreTrainedPolicy):
             attention_mask=att_2d_masks,
             position_ids=position_ids,
             past_key_values=None,
-            inputs_embeds=[prefix_adv_embs, suffix_embs],
+            inputs_embeds=[prefix_embs, suffix_embs],
             use_cache=False,
             fill_kv_cache=False,
         )
@@ -183,16 +190,15 @@ class AdvantagePolicy(PreTrainedPolicy):
         losses = losses[:, :, : self.config.max_action_dim]
 
         loss_dict = {}
-        pct_positive = adv_labels.float().mean().item()
+        if adv_labels_for_log is not None:
+            loss_dict["pct_positive"] = adv_labels_for_log.float().mean().item()
         if reduction == "none":
             per_sample_loss = losses.mean(dim=(1, 2))
             loss_dict["loss"] = per_sample_loss.mean().item()
-            loss_dict["pct_positive"] = pct_positive
             return per_sample_loss, loss_dict
         else:
             loss = losses.mean()
             loss_dict["loss"] = loss.item()
-            loss_dict["pct_positive"] = pct_positive
             return loss, loss_dict
 
     @torch.no_grad()
@@ -259,17 +265,16 @@ class AdvantagePolicy(PreTrainedPolicy):
             images, img_masks, lang_tokens, lang_masks, state=state
         )
 
-        # Inject advantage token (always positive=1 at inference)
-        pos = torch.ones(bsize, dtype=torch.long, device=device)
-        adv_embs = self.adv_embedding(pos).to(dtype=prefix_embs.dtype)
-        att_dtype = prefix_att_masks.dtype
-        pad_dtype = prefix_pad_masks.dtype
-        adv_att = torch.ones(bsize, 1, dtype=att_dtype, device=device)
-        adv_pad = torch.ones(bsize, 1, dtype=pad_dtype, device=device)
+        if self.config.use_advantage_tokens:
+            # Inject advantage token (always positive=1 at inference)
+            pos = torch.ones(bsize, dtype=torch.long, device=device)
+            adv_embs = self.adv_embedding(pos).to(dtype=prefix_embs.dtype)
+            adv_att = torch.ones(bsize, 1, dtype=prefix_att_masks.dtype, device=device)
+            adv_pad = torch.ones(bsize, 1, dtype=prefix_pad_masks.dtype, device=device)
 
-        prefix_embs = torch.cat([prefix_embs, adv_embs], dim=1)
-        prefix_pad_masks = torch.cat([prefix_pad_masks, adv_pad], dim=1)
-        prefix_att_masks = torch.cat([prefix_att_masks, adv_att], dim=1)
+            prefix_embs = torch.cat([prefix_embs, adv_embs], dim=1)
+            prefix_pad_masks = torch.cat([prefix_pad_masks, adv_pad], dim=1)
+            prefix_att_masks = torch.cat([prefix_att_masks, adv_att], dim=1)
 
         # KV cache forward
         prefix_att_2d_masks = make_att_2d_masks(prefix_pad_masks, prefix_att_masks)

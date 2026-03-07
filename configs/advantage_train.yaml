@@ -18,6 +18,7 @@ policy:
   repo_id: reece-omahoney/smolvla-libero-advantage
   smolvla_checkpoint: reece-omahoney/smolvla-libero-16-chunk
   stats_repo_id: reece-omahoney/libero
+  use_advantage_tokens: true
   advantage_dropout: 0.3
   device: cuda
   chunk_size: 16
@@ -28,8 +29,8 @@ policy:
   max_action_dim: 7
 
 eval:
-  n_episodes: 10
-  batch_size: 1
+  n_episodes: 25
+  batch_size: 5
 
 wandb:
   enable: true

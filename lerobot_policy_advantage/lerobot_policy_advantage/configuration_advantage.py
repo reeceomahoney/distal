@@ -18,6 +18,7 @@ from lerobot.utils.constants import OBS_IMAGES
 @dataclass
 class AdvantageConfig(PreTrainedConfig):
     # Advantage-specific
+    use_advantage_tokens: bool = True
     advantage_dropout: float = 0.3
     smolvla_checkpoint: str | None = None
     stats_repo_id: str | None = None
