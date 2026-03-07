@@ -45,7 +45,7 @@ def build_sbatch_script(cfg: SlurmConfig) -> str:
             "singularity run --nv",
             '--env "WANDB_API_KEY=${WANDB_API_KEY}"',
             '--env "HF_TOKEN=${HF_TOKEN}"',
-            f'--env "PYTHONPATH={REMOTE_PATH}"',
+            f'--env "PYTHONPATH={REMOTE_PATH}:{REMOTE_PATH}/lerobot_policy_advantage"',
             f"container.sif {cfg.command}",
         ]
     )
