@@ -24,7 +24,7 @@ from piper_arm.value_model import ValueConfig, ValueModel
 
 @dataclass
 class TrainValueConfig:
-    dataset_repo_id: str = "reece-omahoney/libero-10-maha"
+    dataset_repo_id: str = "reece-omahoney/libero"
     dataset_root: str | None = None
     c_fail: float = 1000.0
 
@@ -32,13 +32,13 @@ class TrainValueConfig:
 
     # Training
     batch_size: int = 32
-    total_steps: int = 40_000
+    total_steps: int = 100_000
 
     # Logging & checkpointing
     log_interval: int = 100
     save_interval: int = 10_000
     output_dir: str = "outputs/value"
-    wandb_project: str | None = "piper-value"
+    wandb_project: str | None = "distal-value"
     wandb_run_name: str | None = None
 
     num_workers: int = 4
