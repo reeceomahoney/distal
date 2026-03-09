@@ -123,7 +123,11 @@ def rollout(
             if is_success is not None:
                 for i in range(n_envs):
                     if active[i] and (bool(terminated[i]) or bool(truncated[i])):
-                        val = is_success[i] if hasattr(is_success, "__len__") else is_success
+                        val = (
+                            is_success[i]
+                            if hasattr(is_success, "__len__")
+                            else is_success
+                        )
                         if hasattr(val, "item"):
                             val = val.item()
                         if val:
