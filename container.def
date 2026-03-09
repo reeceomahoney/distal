@@ -8,10 +8,18 @@ From: python:3.10-slim
     piper_arm /opt/piper_arm/piper_arm
     lerobot_policy_advantage /opt/piper_arm/lerobot_policy_advantage
 
-    # To get EGL working
-    egl_vendor.d/10_nvidia.json /usr/share/glvnd/egl_vendor.d/10_nvidia.json
-
 %post
+    # EGL vendor config for NVIDIA
+    mkdir -p /usr/share/glvnd/egl_vendor.d
+    cat > /usr/share/glvnd/egl_vendor.d/10_nvidia.json << 'NVJSON'
+{
+    "file_format_version": "1.0.0",
+    "ICD": {
+        "library_path": "libEGL_nvidia.so.0"
+    }
+}
+NVJSON
+
     apt-get update && apt-get install -y --no-install-recommends \
         curl ffmpeg libavutil-dev libavcodec-dev libavformat-dev libswscale-dev \
         git linux-libc-dev build-essential cmake \
