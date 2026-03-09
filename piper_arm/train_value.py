@@ -9,6 +9,7 @@ Usage:
 
 import itertools
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 
 import draccus
@@ -37,7 +38,7 @@ class TrainValueConfig:
     # Logging & checkpointing
     log_interval: int = 100
     save_interval: int = 10_000
-    output_dir: str = "outputs/value"
+    output_dir: str | None = None
     wandb_project: str | None = "distal-value"
     wandb_run_name: str | None = None
 
@@ -137,14 +138,25 @@ def prepare_batch(
 @draccus.wrap()  # type: ignore[misc]
 def main(cfg: TrainValueConfig):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    output_dir = Path(cfg.output_dir)
+    now = datetime.now()
+    if cfg.output_dir:
+        output_dir = Path(cfg.output_dir)
+    else:
+        output_dir = (
+            Path("outputs/train") / now.strftime("%Y-%m-%d") / now.strftime("%H-%M-%S")
+        )
     output_dir.mkdir(parents=True, exist_ok=True)
 
     # ── W&B ──
     if cfg.wandb_project:
         import wandb
 
-        wandb.init(project=cfg.wandb_project, name=cfg.wandb_run_name, config=vars(cfg))  # type: ignore[arg-type]
+        wandb.init(
+            project=cfg.wandb_project,
+            name=cfg.wandb_run_name,
+            config=vars(cfg),
+            dir=str(output_dir),
+        )
 
     # ── Dataset ──
     ds_kwargs: dict = {"repo_id": cfg.dataset_repo_id}
