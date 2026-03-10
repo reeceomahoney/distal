@@ -1,8 +1,12 @@
 """Pre-compute binary advantage labels and add them to a LeRobot dataset.
 
-Loads a trained value model, computes per-task advantage thresholds, then
-binarizes per-sample advantages. Adds an `advantage_label` column to the
-dataset's underlying HuggingFace dataset and saves/pushes the result.
+Loads a trained value model, computes n-step TD advantages, then binarizes
+per-sample advantages using per-task percentile thresholds. Adds an
+`advantage_label` column to the dataset's parquet files.
+
+N-step advantage: A(t) = sum_{k=0}^{N-1} r_{t+k} + V(t+N) - V(t)
+where r = -1/max_ep_len per step. Falls back to MC return when the n-step
+window extends past the episode boundary.
 
 Usage:
     python -m piper_arm.compute_advantage_labels
@@ -12,12 +16,13 @@ import json
 from dataclasses import dataclass
 
 import draccus
+import numpy as np
 import pandas as pd
 import torch
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from torch.utils.data import DataLoader
 
-from piper_arm.train_value import compute_returns, load_value_preprocessor
+from piper_arm.train_value import load_value_preprocessor
 from piper_arm.value_model import ValueConfig, ValueModel
 
 
@@ -28,6 +33,7 @@ class ComputeAdvantageLabelsConfig:
     dataset_repo_id: str = "reece-omahoney/libero-10-maha"
     dataset_root: str | None = None
     c_fail: float = 1000.0
+    n_step: int = 10
     advantage_percentile: float = 0.3
     batch_size: int = 64
     num_workers: int = 4
@@ -48,85 +54,17 @@ def load_value_model(checkpoint_path: str, device: torch.device) -> ValueModel:
     return model
 
 
-def compute_advantage_thresholds(
+def compute_all_values(
     dataset: LeRobotDataset,
     value_model: ValueModel,
     preprocessor,
-    c_fail: float,
-    device: torch.device,
-    batch_size: int = 64,
-) -> dict[str, float]:
-    """Compute per-task advantage thresholds (30th percentile).
-
-    Iterates over the full dataset, computes V(s) and ground-truth returns,
-    then finds the advantage percentile threshold per task.
-    """
-    all_steps = dataset.hf_dataset["steps_remaining"]
-    max_ep_len = max(s.item() for s in all_steps) + 1
-
-    loader = DataLoader(
-        dataset,  # type: ignore[arg-type]
-        batch_size=batch_size,
-        shuffle=False,
-        num_workers=4,
-        pin_memory=True,
-        drop_last=False,
-    )
-
-    task_advantages: dict[str, list[float]] = {}
-
-    total_batches = len(loader)
-    for batch_idx, batch in enumerate(loader):
-        if batch_idx % 100 == 0 or batch_idx == total_batches - 1:
-            print(f"  [thresholds] batch {batch_idx + 1}/{total_batches}", flush=True)
-
-        batch = preprocessor(batch)
-
-        returns = compute_returns(
-            batch["steps_remaining"].to(device),
-            batch["success"].to(device),
-            max_ep_len,
-            c_fail,
-        )
-
-        with torch.no_grad():
-            logits = value_model(batch)
-            values = value_model.predict_value(logits)
-
-        advantages = (returns - values).cpu().tolist()
-
-        for i, task in enumerate(batch["task"]):
-            if task not in task_advantages:
-                task_advantages[task] = []
-            task_advantages[task].append(advantages[i])
-
-    # Compute percentile threshold per task
-    thresholds: dict[str, float] = {}
-    for task, advs in task_advantages.items():
-        advs_t = torch.tensor(advs)
-        thresholds[task] = torch.quantile(advs_t, 0.3).item()
-        print(
-            f"  Task: {task[:60]:60s}  threshold={thresholds[task]:.4f}  n={len(advs)}"
-        )
-
-    return thresholds
-
-
-def compute_all_labels(
-    dataset: LeRobotDataset,
-    value_model: ValueModel,
-    preprocessor,
-    thresholds: dict[str, float],
-    max_episode_length: int,
-    c_fail: float,
-    device: torch.device,
     batch_size: int = 64,
     num_workers: int = 4,
-) -> list[int]:
-    """Compute binary advantage labels for every sample in the dataset.
+) -> np.ndarray:
+    """Compute V(s) for every sample in the dataset.
 
     Returns:
-        List of integer labels (0 or 1), one per dataset frame.
+        (N,) float array of predicted values, one per frame.
     """
     loader = DataLoader(
         dataset,  # type: ignore[arg-type]
@@ -137,35 +75,103 @@ def compute_all_labels(
         drop_last=False,
     )
 
-    all_labels: list[int] = []
-
+    all_values: list[float] = []
     total_batches = len(loader)
     for batch_idx, batch in enumerate(loader):
         if batch_idx % 100 == 0 or batch_idx == total_batches - 1:
-            print(f"  [labels] batch {batch_idx + 1}/{total_batches}", flush=True)
+            print(f"  [values] batch {batch_idx + 1}/{total_batches}", flush=True)
 
         batch = preprocessor(batch)
-
-        returns = compute_returns(
-            batch["steps_remaining"].to(device),
-            batch["success"].to(device),
-            max_episode_length,
-            c_fail,
-        )
-
         with torch.no_grad():
             logits = value_model(batch)
             values = value_model.predict_value(logits)
+        all_values.extend(values.cpu().tolist())
 
-        advantages = (returns - values).cpu()
-        task_texts = batch["task"]
+    return np.array(all_values, dtype=np.float64)
 
-        for i, task in enumerate(task_texts):
-            threshold = thresholds.get(task, 0.0)
-            label = 1 if advantages[i].item() > threshold else 0
-            all_labels.append(label)
 
-    return all_labels
+def compute_nstep_advantages(
+    values: np.ndarray,
+    steps_remaining: np.ndarray,
+    success: np.ndarray,
+    max_episode_length: int,
+    n_step: int,
+    c_fail: float,
+) -> np.ndarray:
+    """Compute n-step TD advantages for all samples.
+
+    A(t) = sum_{k=0}^{N-1} r_{t+k} + V(t+N) - V(t)
+
+    Per-step reward is -1/max_episode_length. When the n-step window extends
+    past the episode end (steps_remaining < n_step), falls back to the MC
+    return G(t) - V(t).
+
+    Args:
+        values: (N,) predicted values for each frame.
+        steps_remaining: (N,) steps remaining per frame.
+        success: (N,) bool success per frame.
+        max_episode_length: max steps in any episode.
+        n_step: number of lookahead steps N.
+        c_fail: failure penalty for MC fallback.
+
+    Returns:
+        (N,) float array of advantages.
+    """
+    num_frames = len(values)
+    advantages = np.zeros(num_frames, dtype=np.float64)
+    step_reward = -1.0 / max_episode_length
+
+    for i in range(num_frames):
+        sr = int(steps_remaining[i])
+        if sr >= n_step:
+            # N-step: A = sum of N step rewards + V(t+N) - V(t)
+            n_step_return = n_step * step_reward + values[i + n_step]
+            advantages[i] = n_step_return - values[i]
+        else:
+            # Near episode end: fall back to MC return
+            succ = bool(success[i])
+            if succ:
+                mc_return = -sr / max_episode_length
+            else:
+                mc_return = max((-sr - c_fail + 1) / max_episode_length, -1.0)
+            advantages[i] = mc_return - values[i]
+
+    return advantages
+
+
+def compute_thresholds_from_advantages(
+    advantages: np.ndarray,
+    tasks: list[str],
+    percentile: float,
+) -> dict[str, float]:
+    """Compute per-task advantage thresholds at the given percentile."""
+    task_advantages: dict[str, list[float]] = {}
+    for i, task in enumerate(tasks):
+        if task not in task_advantages:
+            task_advantages[task] = []
+        task_advantages[task].append(advantages[i])
+
+    thresholds: dict[str, float] = {}
+    for task, advs in task_advantages.items():
+        advs_t = torch.tensor(advs)
+        thresholds[task] = torch.quantile(advs_t, percentile).item()
+        print(
+            f"  Task: {task[:60]:60s}  threshold={thresholds[task]:.4f}  n={len(advs)}"
+        )
+    return thresholds
+
+
+def binarize_advantages(
+    advantages: np.ndarray,
+    tasks: list[str],
+    thresholds: dict[str, float],
+) -> list[int]:
+    """Binarize advantages using per-task thresholds."""
+    labels: list[int] = []
+    for i, task in enumerate(tasks):
+        threshold = thresholds.get(task, 0.0)
+        labels.append(1 if advantages[i] > threshold else 0)
+    return labels
 
 
 @draccus.wrap()  # type: ignore[misc]
@@ -188,25 +194,57 @@ def main(cfg: ComputeAdvantageLabelsConfig):
     value_model: ValueModel = load_value_model(cfg.value_checkpoint, device)
     preprocessor = load_value_preprocessor(cfg.pretrained_path)
 
-    # Compute per-task thresholds
-    print("Computing per-task advantage thresholds...")
-    thresholds = compute_advantage_thresholds(
-        dataset, value_model, preprocessor, cfg.c_fail, device
-    )
-
-    # Compute labels for all samples
-    print("Computing advantage labels for all samples...")
-    labels = compute_all_labels(
+    # Compute V(s) for all samples
+    print("Computing values for all samples...")
+    values = compute_all_values(
         dataset,
         value_model,
         preprocessor,
-        thresholds,
-        max_episode_length,
-        cfg.c_fail,
-        device,
         batch_size=cfg.batch_size,
         num_workers=cfg.num_workers,
     )
+
+    # Extract episode metadata as arrays
+    steps_remaining = np.array(
+        [s.item() for s in dataset.hf_dataset["steps_remaining"]]
+    )
+    success = np.array([s.item() for s in dataset.hf_dataset["success"]])
+
+    # Collect task strings (need a sequential pass through the dataset)
+    print("Collecting task strings...")
+    tasks: list[str] = []
+    task_loader = DataLoader(
+        dataset,  # type: ignore[arg-type]
+        batch_size=cfg.batch_size,
+        shuffle=False,
+        num_workers=cfg.num_workers,
+        pin_memory=False,
+        drop_last=False,
+    )
+    for batch in task_loader:
+        tasks.extend(batch["task"])
+
+    # Compute n-step advantages
+    print(f"Computing {cfg.n_step}-step advantages...")
+    advantages = compute_nstep_advantages(
+        values,
+        steps_remaining,
+        success,
+        max_episode_length,
+        cfg.n_step,
+        cfg.c_fail,
+    )
+
+    # Compute per-task thresholds and binarize
+    print("Computing per-task advantage thresholds...")
+    thresholds = compute_thresholds_from_advantages(
+        advantages,
+        tasks,
+        cfg.advantage_percentile,
+    )
+
+    print("Binarizing advantage labels...")
+    labels = binarize_advantages(advantages, tasks, thresholds)
 
     assert (
         len(labels) == dataset.num_frames
