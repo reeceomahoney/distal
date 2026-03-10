@@ -105,9 +105,7 @@ def batch_to_transition_with_extras(batch: dict[str, Any]) -> EnvTransition:
     return transition
 
 
-def load_value_preprocessor(
-    pretrained_path: str,
-) -> PolicyProcessorPipeline[dict[str, Any], dict[str, Any]]:
+def load_value_preprocessor(pretrained_path: str):
     """Load preprocessor from a pretrained SmolVLA checkpoint.
 
     Image preprocessing and state padding are handled inside ValueModel.forward.
@@ -117,7 +115,7 @@ def load_value_preprocessor(
         config_filename=f"{POLICY_PREPROCESSOR_DEFAULT_NAME}.json",
         to_transition=batch_to_transition_with_extras,  # type: ignore[invalid-argument-type]
     )
-    return preprocessor  # type: ignore[invalid-return-type]
+    return preprocessor
 
 
 @draccus.wrap()

@@ -62,14 +62,14 @@ def _embed_prefix_pi05(policy: PI05Policy, batch: dict):
         images, img_masks, lang_tokens, lang_masks
     )
     prefix_att_2d_masks = make_att_2d_masks(prefix_pad_masks, prefix_att_masks)
-    prefix_position_ids: torch.LongTensor = torch.cumsum(prefix_pad_masks, dim=1) - 1  # type: ignore[assignment]
+    prefix_position_ids = torch.cumsum(prefix_pad_masks, dim=1) - 1
 
     prefix_att_2d_masks_4d = model._prepare_attention_masks_4d(prefix_att_2d_masks)
     prefix_att_2d_masks_4d = prefix_att_2d_masks_4d.to(dtype=prefix_embs.dtype)
 
     (prefix_out, _), _ = model.paligemma_with_expert.forward(
         attention_mask=prefix_att_2d_masks_4d,
-        position_ids=prefix_position_ids,
+        position_ids=cast(torch.LongTensor, prefix_position_ids),
         past_key_values=None,
         inputs_embeds=cast(list[torch.FloatTensor], [prefix_embs, None]),
         use_cache=False,
@@ -100,11 +100,11 @@ def _embed_prefix_smolvla(policy: SmolVLAPolicy, batch: dict):
         images, img_masks, lang_tokens, lang_masks, state=state
     )
     prefix_att_2d_masks = smolvla_make_att_2d_masks(prefix_pad_masks, prefix_att_masks)
-    prefix_position_ids: torch.LongTensor = torch.cumsum(prefix_pad_masks, dim=1) - 1  # type: ignore[assignment]
+    prefix_position_ids = torch.cumsum(prefix_pad_masks, dim=1) - 1
 
     (prefix_out, _), _ = model.vlm_with_expert.forward(
         attention_mask=prefix_att_2d_masks,
-        position_ids=prefix_position_ids,
+        position_ids=cast(torch.LongTensor, prefix_position_ids),
         past_key_values=None,
         inputs_embeds=cast(list[torch.FloatTensor], [prefix_embs, None]),
         use_cache=False,

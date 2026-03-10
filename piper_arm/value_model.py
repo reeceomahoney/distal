@@ -8,6 +8,7 @@ The value head predicts returns as a categorical distribution over discrete bins
 
 import math
 from dataclasses import dataclass
+from typing import cast
 
 import torch
 import torch.nn.functional as F
@@ -279,9 +280,9 @@ class ValueModel(nn.Module):
         # 4. Forward through VLM + expert
         (_, suffix_out), _ = self.vlm_with_expert.forward(
             attention_mask=att_2d_masks,
-            position_ids=position_ids,  # type: ignore[invalid-argument-type]
+            position_ids=cast(torch.LongTensor, position_ids),
             past_key_values=None,
-            inputs_embeds=[prefix_embs, suffix_embs],  # type: ignore[invalid-argument-type]
+            inputs_embeds=cast(list[torch.FloatTensor], [prefix_embs, suffix_embs]),
             use_cache=False,
             fill_kv_cache=False,
         )
@@ -294,7 +295,7 @@ class ValueModel(nn.Module):
     def predict_value(self, logits: Tensor) -> Tensor:
         """Expected value from logits via softmax + dot with bin centers."""
         probs = F.softmax(logits, dim=-1)
-        return (probs * self.bin_centers).sum(dim=-1)  # type: ignore[unsupported-operator]
+        return (probs * cast(Tensor, self.bin_centers)).sum(dim=-1)
 
     @staticmethod
     def returns_to_bins(returns: Tensor, n_bins: int = 201) -> Tensor:
