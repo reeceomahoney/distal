@@ -21,15 +21,12 @@ from lerobot.envs.configs import LiberoEnv as LiberoEnvConfig
 from lerobot.envs.factory import make_env, make_env_pre_post_processors
 from lerobot.envs.utils import add_envs_task, preprocess_observation
 from lerobot.policies.factory import make_policy, make_pre_post_processors
-from lerobot.policies.smolvla.modeling_smolvla import (
-    SmolVLAPolicy,
-    pad_vector,
-)
+from lerobot.policies.smolvla.modeling_smolvla import SmolVLAPolicy
 from lerobot.utils.constants import ACTION
 from lerobot.utils.utils import inside_slurm
 from tqdm import tqdm
 
-from piper_arm.train_value import TrainValueConfig  # noqa: F401
+from piper_arm.train_value import load_value_preprocessor
 from piper_arm.value_model import ValueConfig, ValueModel
 
 
@@ -56,50 +53,6 @@ def load_value_model(checkpoint_path: str, device: torch.device) -> ValueModel:
     return model
 
 
-def prepare_obs_for_value(
-    obs: dict[str, torch.Tensor],
-    task_text: str,
-    value_model: ValueModel,
-    device: torch.device,
-) -> tuple[
-    list[torch.Tensor],
-    list[torch.Tensor],
-    torch.Tensor,
-    torch.Tensor,
-    torch.Tensor,
-]:
-    """Prepare a single-step observation for the value model."""
-    img_keys = sorted(k for k in obs if k.startswith("observation.images."))
-
-    images = []
-    img_masks = []
-    for key in img_keys:
-        img = obs[key].to(device)
-        if img.ndim == 3:
-            img = img.unsqueeze(0)
-        img = value_model.preprocess_images(img)
-        images.append(img)
-        img_masks.append(torch.ones(img.shape[0], dtype=torch.bool, device=device))
-
-    state = obs["observation.state"].to(device)
-    if state.ndim == 1:
-        state = state.unsqueeze(0)
-    state = pad_vector(state, value_model.config.max_state_dim)
-
-    tokenizer = value_model.vlm_with_expert.processor.tokenizer
-    tokenized = tokenizer(
-        [task_text],
-        padding="longest",
-        truncation=True,
-        max_length=value_model.config.tokenizer_max_length,
-        return_tensors="pt",
-    )
-    lang_tokens = tokenized["input_ids"].to(device)
-    lang_masks = tokenized["attention_mask"].bool().to(device)
-
-    return images, img_masks, lang_tokens, lang_masks, state
-
-
 def to_hwc_uint8(chw_float: torch.Tensor) -> np.ndarray:
     return (chw_float.clamp(0, 1) * 255).to(torch.uint8).permute(1, 2, 0).cpu().numpy()
 
@@ -107,6 +60,7 @@ def to_hwc_uint8(chw_float: torch.Tensor) -> np.ndarray:
 def rollout_with_values(
     policy: SmolVLAPolicy,
     value_model: ValueModel,
+    value_preprocessor,
     vec_env,
     preprocessor,
     postprocessor,
@@ -142,10 +96,8 @@ def rollout_with_values(
                 k: v[0] if isinstance(v, torch.Tensor) else v
                 for k, v in raw_obs.items()
             }
-            images, img_masks, lang_tokens, lang_masks, state = prepare_obs_for_value(
-                obs_i, task_text, value_model, device
-            )
-            logits = value_model(images, img_masks, lang_tokens, lang_masks, state)
+            value_batch = value_preprocessor(obs_i)
+            logits = value_model(value_batch)
             value = value_model.predict_value(logits).item()
 
         # Collect frame data
@@ -219,8 +171,9 @@ def main(cfg: RolloutValueVizConfig):
         env_cfg, policy_cfg
     )
 
-    # Load value model
+    # Load value model & value preprocessor
     value_model = load_value_model(cfg.value_checkpoint, device)
+    value_preprocessor = load_value_preprocessor(cfg.policy_path)
     print(f"Loaded value model from {cfg.value_checkpoint}")
 
     # Rollout
@@ -233,6 +186,7 @@ def main(cfg: RolloutValueVizConfig):
             result = rollout_with_values(
                 policy=policy,
                 value_model=value_model,
+                value_preprocessor=value_preprocessor,
                 vec_env=vec_env,
                 preprocessor=preprocessor,
                 postprocessor=postprocessor,

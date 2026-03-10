@@ -11,6 +11,7 @@ import random
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 import draccus
 import numpy as np
@@ -19,7 +20,10 @@ import torch.nn.functional as F
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.datasets.utils import cycle
 from lerobot.policies.smolvla.configuration_smolvla import SmolVLAConfig
-from lerobot.policies.smolvla.modeling_smolvla import pad_vector, resize_with_pad
+from lerobot.processor import PolicyProcessorPipeline
+from lerobot.processor.converters import batch_to_transition
+from lerobot.processor.pipeline import EnvTransition, TransitionKey
+from lerobot.utils.constants import POLICY_PREPROCESSOR_DEFAULT_NAME
 from torch.utils.data import DataLoader
 
 from piper_arm.value_model import ValueConfig, ValueModel
@@ -29,6 +33,7 @@ from piper_arm.value_model import ValueConfig, ValueModel
 class TrainValueConfig:
     dataset_repo_id: str = "reece-omahoney/libero"
     dataset_root: str | None = None
+    pretrained_path: str = "reece-omahoney/smolvla-libero-16-chunk"
     c_fail: float = 1000.0
 
     value: ValueConfig = field(default_factory=ValueConfig)
@@ -79,63 +84,39 @@ def compute_returns(
     return returns.clamp(-1.0, 0.0)
 
 
-def prepare_batch(
-    batch: dict[str, torch.Tensor],
-    config: TrainValueConfig,
-    device: torch.device,
-    tokenizer,
-    max_episode_length: int,
-) -> tuple[
-    list[torch.Tensor],
-    list[torch.Tensor],
-    torch.Tensor,
-    torch.Tensor,
-    torch.Tensor,
-    torch.Tensor,
-]:
-    """Prepare a batch for the value model.
+VALUE_EXTRA_KEYS = ("steps_remaining", "success")
 
-    Returns:
-        images, img_masks, lang_tokens, lang_masks, state, returns
+
+def batch_to_transition_with_extras(batch: dict[str, Any]) -> EnvTransition:
+    """Wrap batch_to_transition to preserve value-training keys.
+
+    The default converter only extracts known keys (task, index, etc.) into
+    complementary_data. This version also preserves steps_remaining and success.
     """
-    # Collect image keys
-    img_keys = sorted(k for k in batch if k.startswith("observation.images."))
+    transition = batch_to_transition(batch)
+    comp = transition.get(TransitionKey.COMPLEMENTARY_DATA) or {}
+    for key in VALUE_EXTRA_KEYS:
+        if key in batch and key not in comp:
+            comp[key] = batch[key]
+    transition[TransitionKey.COMPLEMENTARY_DATA] = comp
+    return transition
 
-    images = []
-    img_masks = []
-    for key in img_keys:
-        img = batch[key].to(device)  # (B, C, H, W) float [0, 1]
-        w, h = config.value.resize_imgs_with_padding
-        img = resize_with_pad(img, w, h, pad_value=-1)
-        img = img * 2.0 - 1.0  # normalize to [-1, 1] for SigLIP
-        images.append(img)
-        img_masks.append(torch.ones(img.shape[0], dtype=torch.bool, device=device))
 
-    # State
-    state = batch["observation.state"].to(device)
-    state = pad_vector(state, config.value.max_state_dim)
+def load_value_preprocessor(
+    pretrained_path: str,
+) -> PolicyProcessorPipeline[dict[str, Any], dict[str, Any]]:
+    """Load preprocessor from a pretrained SmolVLA checkpoint.
 
-    # Language tokens from task description
-    task_texts = batch["task"]
-    tokenized = tokenizer(
-        task_texts,
-        padding="longest",
-        truncation=True,
-        max_length=config.value.tokenizer_max_length,
-        return_tensors="pt",
+    Image preprocessing and state padding are handled inside ValueModel.forward.
+    """
+    preprocessor: PolicyProcessorPipeline[dict[str, Any], dict[str, Any]] = (
+        PolicyProcessorPipeline.from_pretrained(
+            pretrained_model_name_or_path=pretrained_path,
+            config_filename=f"{POLICY_PREPROCESSOR_DEFAULT_NAME}.json",
+            to_transition=batch_to_transition_with_extras,
+        )
     )
-    lang_tokens = tokenized["input_ids"].to(device)
-    lang_masks = tokenized["attention_mask"].bool().to(device)
-
-    # Returns
-    returns = compute_returns(
-        batch["steps_remaining"].to(device),
-        batch["success"].to(device),
-        max_episode_length,
-        config.c_fail,
-    )
-
-    return images, img_masks, lang_tokens, lang_masks, state, returns
+    return preprocessor
 
 
 @draccus.wrap()  # type: ignore[misc]
@@ -188,10 +169,10 @@ def main(cfg: TrainValueConfig):
         drop_last=True,
     )
 
-    # ── Model ──
+    # ── Model & preprocessor ──
     model = ValueModel(cfg.value)
     model = model.to(device)
-    tokenizer = model.vlm_with_expert.processor.tokenizer
+    preprocessor = load_value_preprocessor(cfg.pretrained_path)
 
     # ── Optimizer & scheduler (SmolVLA presets) ──
     smolvla_cfg = SmolVLAConfig()
@@ -208,12 +189,13 @@ def main(cfg: TrainValueConfig):
 
     for step in range(1, cfg.total_steps + 1):
         batch = next(data_iter)
+        batch = preprocessor(batch)
 
-        images, img_masks, lang_tokens, lang_masks, state, returns = prepare_batch(
-            batch, cfg, device, tokenizer, max_episode_length
+        returns = compute_returns(
+            batch["steps_remaining"], batch["success"], max_episode_length, cfg.c_fail
         )
 
-        logits = model(images, img_masks, lang_tokens, lang_masks, state)
+        logits = model(batch)
         targets = ValueModel.returns_to_bins(returns, cfg.value.n_bins)
         loss = F.cross_entropy(logits, targets)
 

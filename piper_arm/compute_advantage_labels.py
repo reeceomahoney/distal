@@ -15,17 +15,16 @@ import draccus
 import pandas as pd
 import torch
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
-from lerobot.policies.smolvla.modeling_smolvla import pad_vector, resize_with_pad
-from torch import Tensor
 from torch.utils.data import DataLoader
 
-from piper_arm.train_value import TrainValueConfig, compute_returns  # noqa: F401
+from piper_arm.train_value import compute_returns, load_value_preprocessor
 from piper_arm.value_model import ValueConfig, ValueModel
 
 
 @dataclass
 class ComputeAdvantageLabelsConfig:
     value_checkpoint: str = "outputs/value/checkpoint_final.pt"
+    pretrained_path: str = "reece-omahoney/smolvla-libero-16-chunk"
     dataset_repo_id: str = "reece-omahoney/libero-10-maha"
     dataset_root: str | None = None
     c_fail: float = 1000.0
@@ -49,55 +48,10 @@ def load_value_model(checkpoint_path: str, device: torch.device) -> ValueModel:
     return model
 
 
-def prepare_value_inputs(
-    batch: dict[str, Tensor],
-    value_model: ValueModel,
-    tokenizer,
-    device: torch.device,
-) -> tuple[list[Tensor], list[Tensor], Tensor, Tensor, Tensor]:
-    """Prepare a batch for the value model.
-
-    Handles image preprocessing (resize, normalize), state padding,
-    and language tokenization.
-
-    Returns:
-        (images, img_masks, lang_tokens, lang_masks, state)
-    """
-    img_keys = sorted(k for k in batch if k.startswith("observation.images."))
-    images = []
-    img_masks = []
-    for key in img_keys:
-        img = batch[key]
-        img = img[:, -1] if img.ndim == 5 else img
-        img = img.to(device)
-        w, h = value_model.config.resize_imgs_with_padding
-        img = resize_with_pad(img, w, h, pad_value=-1)
-        img = img * 2.0 - 1.0
-        images.append(img)
-        img_masks.append(torch.ones(img.shape[0], dtype=torch.bool, device=device))
-
-    state = batch["observation.state"]
-    state = state[:, -1] if state.ndim > 2 else state
-    state = state.to(device)
-    state = pad_vector(state, value_model.config.max_state_dim)
-
-    task_texts = batch["task"]
-    tokenized = tokenizer(
-        task_texts,
-        padding="longest",
-        truncation=True,
-        max_length=value_model.config.tokenizer_max_length,
-        return_tensors="pt",
-    )
-    lang_tokens = tokenized["input_ids"].to(device)
-    lang_masks = tokenized["attention_mask"].bool().to(device)
-
-    return images, img_masks, lang_tokens, lang_masks, state
-
-
 def compute_advantage_thresholds(
     dataset: LeRobotDataset,
     value_model: ValueModel,
+    preprocessor,
     c_fail: float,
     device: torch.device,
     batch_size: int = 64,
@@ -109,7 +63,6 @@ def compute_advantage_thresholds(
     """
     all_steps = dataset.hf_dataset["steps_remaining"]
     max_ep_len = max(s.item() for s in all_steps) + 1
-    tokenizer = value_model.vlm_with_expert.processor.tokenizer
 
     loader = DataLoader(
         dataset,  # type: ignore[arg-type]
@@ -127,9 +80,7 @@ def compute_advantage_thresholds(
         if batch_idx % 100 == 0 or batch_idx == total_batches - 1:
             print(f"  [thresholds] batch {batch_idx + 1}/{total_batches}", flush=True)
 
-        images, img_masks, lang_tokens, lang_masks, state = prepare_value_inputs(
-            batch, value_model, tokenizer, device
-        )
+        batch = preprocessor(batch)
 
         returns = compute_returns(
             batch["steps_remaining"].to(device),
@@ -139,7 +90,7 @@ def compute_advantage_thresholds(
         )
 
         with torch.no_grad():
-            logits = value_model(images, img_masks, lang_tokens, lang_masks, state)
+            logits = value_model(batch)
             values = value_model.predict_value(logits)
 
         advantages = (returns - values).cpu().tolist()
@@ -164,6 +115,7 @@ def compute_advantage_thresholds(
 def compute_all_labels(
     dataset: LeRobotDataset,
     value_model: ValueModel,
+    preprocessor,
     thresholds: dict[str, float],
     max_episode_length: int,
     c_fail: float,
@@ -176,8 +128,6 @@ def compute_all_labels(
     Returns:
         List of integer labels (0 or 1), one per dataset frame.
     """
-    tokenizer = value_model.vlm_with_expert.processor.tokenizer
-
     loader = DataLoader(
         dataset,  # type: ignore[arg-type]
         batch_size=batch_size,
@@ -194,9 +144,7 @@ def compute_all_labels(
         if batch_idx % 100 == 0 or batch_idx == total_batches - 1:
             print(f"  [labels] batch {batch_idx + 1}/{total_batches}", flush=True)
 
-        images, img_masks, lang_tokens, lang_masks, state = prepare_value_inputs(
-            batch, value_model, tokenizer, device
-        )
+        batch = preprocessor(batch)
 
         returns = compute_returns(
             batch["steps_remaining"].to(device),
@@ -206,7 +154,7 @@ def compute_all_labels(
         )
 
         with torch.no_grad():
-            logits = value_model(images, img_masks, lang_tokens, lang_masks, state)
+            logits = value_model(batch)
             values = value_model.predict_value(logits)
 
         advantages = (returns - values).cpu()
@@ -235,19 +183,23 @@ def main(cfg: ComputeAdvantageLabelsConfig):
     print(f"Dataset: {dataset.num_episodes} episodes, {dataset.num_frames} frames")
     print(f"Max episode length: {max_episode_length}")
 
-    # Load value model
+    # Load value model & preprocessor
     print("Loading value model...")
     value_model: ValueModel = load_value_model(cfg.value_checkpoint, device)
+    preprocessor = load_value_preprocessor(cfg.pretrained_path)
 
     # Compute per-task thresholds
     print("Computing per-task advantage thresholds...")
-    thresholds = compute_advantage_thresholds(dataset, value_model, cfg.c_fail, device)
+    thresholds = compute_advantage_thresholds(
+        dataset, value_model, preprocessor, cfg.c_fail, device
+    )
 
     # Compute labels for all samples
     print("Computing advantage labels for all samples...")
     labels = compute_all_labels(
         dataset,
         value_model,
+        preprocessor,
         thresholds,
         max_episode_length,
         cfg.c_fail,

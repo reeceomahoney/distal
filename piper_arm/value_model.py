@@ -14,9 +14,15 @@ import torch.nn.functional as F
 from lerobot.policies.smolvla.modeling_smolvla import (
     make_att_2d_masks,
     pad_tensor,
+    pad_vector,
     resize_with_pad,
 )
 from lerobot.policies.smolvla.smolvlm_with_expert import SmolVLMWithExpertModel
+from lerobot.utils.constants import (
+    OBS_LANGUAGE_ATTENTION_MASK,
+    OBS_LANGUAGE_TOKENS,
+    OBS_STATE,
+)
 from torch import Tensor, nn
 
 
@@ -209,19 +215,45 @@ class ValueModel(nn.Module):
         att_masks_t = att_masks_t.expand(bsize, -1)
         return embs_cat, pad_masks_cat, att_masks_t
 
-    def forward(
-        self,
-        images: list[Tensor],
-        img_masks: list[Tensor],
-        lang_tokens: Tensor,
-        lang_masks: Tensor,
-        state: Tensor,
-    ) -> Tensor:
+    def prepare_images(
+        self, batch: dict[str, Tensor]
+    ) -> tuple[list[Tensor], list[Tensor]]:
+        """Resize, pad, and normalize images for SigLIP."""
+        img_keys = sorted(k for k in batch if k.startswith("observation.images."))
+        images = []
+        img_masks = []
+        for key in img_keys:
+            img = batch[key]
+            img = img[:, -1] if img.ndim == 5 else img
+            w, h = self.config.resize_imgs_with_padding
+            img = resize_with_pad(img, w, h, pad_value=-1)
+            img = img * 2.0 - 1.0
+            images.append(img)
+            mask = torch.ones(img.shape[0], dtype=torch.bool, device=img.device)
+            img_masks.append(mask)
+        return images, img_masks
+
+    def prepare_state(self, batch: dict[str, Tensor]) -> Tensor:
+        """Pad state to max_state_dim."""
+        state = batch[OBS_STATE]
+        state = state[:, -1] if state.ndim > 2 else state
+        return pad_vector(state, self.config.max_state_dim)
+
+    def forward(self, batch: dict[str, Tensor]) -> Tensor:
         """Forward pass returning logits over value bins.
+
+        Args:
+            batch: Preprocessed batch dict with observation.images.*, observation.state,
+                   observation.language.tokens, observation.language.attention_mask.
 
         Returns:
             logits: (B, n_bins) — raw logits over bin_centers.
         """
+        images, img_masks = self.prepare_images(batch)
+        state = self.prepare_state(batch)
+        lang_tokens = batch[OBS_LANGUAGE_TOKENS]
+        lang_masks = batch[OBS_LANGUAGE_ATTENTION_MASK]
+
         # 1. Embed prefix
         prefix_embs, prefix_pad_masks, prefix_att_masks = self.embed_prefix(
             images, img_masks, lang_tokens, lang_masks, state
@@ -280,18 +312,3 @@ class ValueModel(nn.Module):
         bin_indices = ((returns + 1.0) * (n_bins - 1)).long()
         bin_indices = bin_indices.clamp(0, n_bins - 1)
         return F.one_hot(bin_indices, num_classes=n_bins).float()
-
-    def preprocess_images(self, images: Tensor) -> Tensor:
-        """Resize and normalize images for SigLIP.
-
-        Args:
-            images: (B, C, H, W) in [0, 1].
-
-        Returns:
-            (B, C, target_h, target_w) in [-1, 1].
-        """
-        w, h = self.config.resize_imgs_with_padding
-        images = resize_with_pad(images, w, h, pad_value=-1)
-        # Normalize from [0, 1] to [-1, 1]
-        images = images * 2.0 - 1.0
-        return images
