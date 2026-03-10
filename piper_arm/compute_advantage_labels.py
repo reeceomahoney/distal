@@ -22,10 +22,8 @@ import torch
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from torch.utils.data import DataLoader
 
-from piper_arm.train_value import (  # noqa: F401
-    TrainValueConfig,
-    load_value_preprocessor,
-)
+from piper_arm.train_value import TrainValueConfig as TrainValueConfig
+from piper_arm.train_value import load_value_preprocessor
 from piper_arm.value_model import ValueConfig, ValueModel
 
 
@@ -96,6 +94,7 @@ def compute_nstep_advantages(
     values: np.ndarray,
     steps_remaining: np.ndarray,
     success: np.ndarray,
+    episode_index: np.ndarray,
     max_episode_length: int,
     n_step: int,
     c_fail: float,
@@ -112,6 +111,7 @@ def compute_nstep_advantages(
         values: (N,) predicted values for each frame.
         steps_remaining: (N,) steps remaining per frame.
         success: (N,) bool success per frame.
+        episode_index: (N,) episode index per frame.
         max_episode_length: max steps in any episode.
         n_step: number of lookahead steps N.
         c_fail: failure penalty for MC fallback.
@@ -125,9 +125,17 @@ def compute_nstep_advantages(
 
     for i in range(num_frames):
         sr = int(steps_remaining[i])
-        if sr >= n_step:
+        ep = int(episode_index[i])
+
+        # Check that i + n_step lands in the same episode
+        target = i + n_step
+        in_episode = (
+            sr >= n_step and target < num_frames and int(episode_index[target]) == ep
+        )
+
+        if in_episode:
             # N-step: A = sum of N step rewards + V(t+N) - V(t)
-            n_step_return = n_step * step_reward + values[i + n_step]
+            n_step_return = n_step * step_reward + values[target]
             advantages[i] = n_step_return - values[i]
         else:
             # Near episode end: fall back to MC return
@@ -211,6 +219,7 @@ def main(cfg: ComputeAdvantageLabelsConfig):
         [s.item() for s in dataset.hf_dataset["steps_remaining"]]
     )
     success = np.array([s.item() for s in dataset.hf_dataset["success"]])
+    episode_index = np.array([s.item() for s in dataset.hf_dataset["episode_index"]])
 
     # Collect task strings (need a sequential pass through the dataset)
     print("Collecting task strings...")
@@ -232,6 +241,7 @@ def main(cfg: ComputeAdvantageLabelsConfig):
         values,
         steps_remaining,
         success,
+        episode_index,
         max_episode_length,
         cfg.n_step,
         cfg.c_fail,
