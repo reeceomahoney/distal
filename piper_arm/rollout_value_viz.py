@@ -37,12 +37,11 @@ from piper_arm.value_model import ValueConfig, ValueModel
 @dataclass
 class RolloutValueVizConfig:
     policy_path: str = "reece-omahoney/smolvla-libero-16-chunk"
-    value_checkpoint: str = "outputs/value/2026-03-10/11-57-00/checkpoint_40000.pt"
+    value_checkpoint: str = "outputs/value/2026-03-10/14-29-58/checkpoint_30000.pt"
     suite_name: str = "libero_10"
     task_ids: list[int] | None = None
     n_episodes: int = 1
     n_envs: int = 1
-    port: int = 9876
     save: bool = False
     output_dir: str = "outputs/rollout_value_viz"
 
@@ -153,7 +152,7 @@ def log_episode_to_rerun(result: dict, episode_idx: int) -> None:
     rr.log("episode/success", rr.TextDocument(status))
 
 
-@draccus.wrap()
+@draccus.wrap()  # type: ignore[misc]
 def main(cfg: RolloutValueVizConfig):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -204,7 +203,6 @@ def main(cfg: RolloutValueVizConfig):
 
     # Visualize with Rerun
     rr.init("rollout_value_viz", spawn=True)
-    addr = f"rerun+http://127.0.0.1:{cfg.port}/proxy"
 
     for idx, result in enumerate(all_results):
         status = "ok" if result["success"] else "fail"
@@ -226,7 +224,7 @@ def main(cfg: RolloutValueVizConfig):
         )
 
         rec = rr.RecordingStream(application_id=f"episode_{idx}_{status}")
-        rec.connect_grpc(addr)
+        rec.connect_grpc()
         with rec:
             rr.send_blueprint(blueprint)
             log_episode_to_rerun(result, idx)
@@ -242,4 +240,4 @@ def main(cfg: RolloutValueVizConfig):
 
 
 if __name__ == "__main__":
-    main()
+    main()  # type: ignore[call-arg]

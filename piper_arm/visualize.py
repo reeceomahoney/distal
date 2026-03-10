@@ -101,7 +101,7 @@ class VisualizeConfig:
     port: int = 9876
 
 
-@draccus.wrap()
+@draccus.wrap()  # type: ignore[misc]
 def main(cfg: VisualizeConfig):
     trace_dir = Path(cfg.trace_dir).resolve()
 
@@ -150,4 +150,4 @@ def main(cfg: VisualizeConfig):
 
 
 if __name__ == "__main__":
-    main()
+    main()  # type: ignore[call-arg]
