@@ -38,6 +38,9 @@ class TrainValueConfig:
 
     value: ValueConfig = field(default_factory=ValueConfig)
 
+    # Resume from a previous value-model checkpoint (.pt file)
+    value_pretrained_path: str | None = None
+
     # Training
     batch_size: int = 32
     total_steps: int = 100_000
@@ -182,6 +185,14 @@ def main(cfg: TrainValueConfig):
     params = [p for p in model.parameters() if p.requires_grad]
     optimizer = optimizer_cfg.build(params)
     scheduler = scheduler_cfg.build(optimizer, num_training_steps=cfg.total_steps)
+
+    # ── Load pretrained value checkpoint ──
+    if cfg.value_pretrained_path:
+        ckpt = torch.load(
+            cfg.value_pretrained_path, map_location=device, weights_only=False
+        )
+        model.load_state_dict(ckpt["model_state_dict"])
+        print(f"Loaded pretrained value model from {cfg.value_pretrained_path}")
 
     # ── Training loop ──
     model.train()
