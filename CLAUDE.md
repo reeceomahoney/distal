@@ -31,12 +31,10 @@ make gui-start          # Start background Flask server
 make gui-stop           # Stop Flask server
 
 # Code quality
-uv run ruff check piper_arm/          # Lint
-uv run ruff format piper_arm/         # Format
-uv run ty                             # Type check (dev dependency)
+uv run pre-commit run --all-files     # Run all pre-commit hooks (ruff --fix, ruff-format)
 ```
 
-Pre-commit hooks run `ruff --fix` and `ruff-format` automatically. Ruff rules: E, F, I (errors, pyflakes, isort).
+Ruff rules: E, F, I (errors, pyflakes, isort).
 
 **Never start function or variable names with underscores.** Use plain names without leading underscores for all functions and variables.
 
