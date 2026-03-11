@@ -1,2 +1,9 @@
 [env]
 _.python.venv = ".venv"
+
+[tasks.container]
+description = "Build Singularity container and upload to cluster"
+run = """
+singularity build --force --fakeroot container.sif container.def
+scp container.sif htc:/data/projects/engs-robotics-ml/kebl6123/piper_arm/container.sif
+"""

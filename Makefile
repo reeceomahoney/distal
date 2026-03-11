@@ -1,4 +1,4 @@
-.PHONY: train finetune eval train-advantage record play container
+.PHONY: train finetune eval train-advantage record play
 
 ############
 # Training #
@@ -31,14 +31,3 @@ record:
 play:
 	lerobot-record --config_path configs/play.yaml \
 		--policy.path=reece-omahoney/smolvla-libero-256
-
-#############
-# Container #
-#############
-
-REMOTE_HOST := htc
-REMOTE_PATH := /data/engs-robotics-ml/kebl6123/piper_arm
-
-container:
-	singularity build --force --fakeroot container.sif container.def
-	scp container.sif $(REMOTE_HOST):$(REMOTE_PATH)/container.sif
