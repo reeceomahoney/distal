@@ -1,6 +1,42 @@
 [env]
 _.python.venv = ".venv"
 
+# Training
+
+[tasks.train]
+description = "Train policy"
+run = "lerobot-train --config_path configs/train.yaml"
+
+[tasks.train-advantage]
+description = "Advantage-conditioned policy fine-tuning"
+run = "lerobot-train --config_path configs/advantage_train.yaml"
+
+[tasks.finetune]
+description = "Fine-tune SmolVLA policy"
+run = """
+lerobot-train --config_path configs/train.yaml \
+    --policy.path=lerobot/smolvla_base \
+    --policy.repo_id=reece-omahoney/foobar \
+    --policy.device=cuda \
+    --policy.n_action_steps=10
+"""
+
+[tasks.eval]
+description = "Evaluate policy in LIBERO sim"
+run = "lerobot-eval --config_path configs/eval.yaml --policy.path=reece-omahoney/smolvla-libero-16-chunk"
+
+# Hardware
+
+[tasks.record]
+description = "Record demonstrations via teleop"
+run = "lerobot-record --config_path configs/record.yaml"
+
+[tasks.play]
+description = "Play trained policy on physical arm"
+run = "lerobot-record --config_path configs/play.yaml --policy.path=reece-omahoney/smolvla-libero-256"
+
+# Cluster
+
 [tasks.container]
 description = "Build Singularity container and upload to cluster"
 run = """
