@@ -21,7 +21,7 @@ LOG_FILE = Path("/tmp/slurm-gui.log")
 
 @dataclass
 class SlurmConfig:
-    command: str = "make train-advantage"
+    command: str = ""
     time: int = 6
     gpu: str = "h100"
     ngpu: int = 1
@@ -41,16 +41,10 @@ def build_sbatch_script(cfg: SlurmConfig) -> str:
         "output": "slurm/slurm-%j.out",
     }
     header = "\n".join(f"#SBATCH --{k}={v}" for k, v in sbatch_opts.items())
-    body = " ".join(
-        [
-            "singularity run --nv",
-            '--env "WANDB_API_KEY=${WANDB_API_KEY}"',
-            '--env "HF_TOKEN=${HF_TOKEN}"',
-            f'--env "PYTHONPATH={REMOTE_PATH}:{REMOTE_PATH}/lerobot_policy_advantage"',
-            f"container.sif {cfg.command}",
-        ]
-    )
-    return f"#!/bin/bash\n{header}\n\nset -euo pipefail\n{body}\n"
+    if not cfg.command:
+        print("Error: no command specified (set in yaml or pass --command)")
+        sys.exit(1)
+    return f"#!/bin/bash\n{header}\n\nset -euo pipefail\n{cfg.command}\n"
 
 
 def sync() -> None:

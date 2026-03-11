@@ -1,4 +1,9 @@
-command: make train-advantage
+command: >-
+  singularity run --nv
+  --env "WANDB_API_KEY=${WANDB_API_KEY}"
+  --env "HF_TOKEN=${HF_TOKEN}"
+  --env "PYTHONPATH=/data/engs-robotics-ml/kebl6123/piper_arm:/data/engs-robotics-ml/kebl6123/piper_arm/lerobot_policy_advantage"
+  container.sif make train-advantage
 time: 6
 gpu: h100
 ngpu: 1
