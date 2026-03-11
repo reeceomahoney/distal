@@ -40,6 +40,8 @@ Ruff rules: E, F, I (errors, pyflakes, isort).
 
 No formal test suite exists — testing is done manually via the Makefile commands.
 
+slurm_tools has its own git repo, use this to push changes
+
 ## Architecture
 
 ### Training Pipeline
