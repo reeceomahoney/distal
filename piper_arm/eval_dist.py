@@ -31,7 +31,7 @@ from piper_arm.rollout import build_frame, rollout
 @dataclass
 class EvalDistConfig:
     policy_path: str = "reece-omahoney/smolvla-libero-16-chunk"
-    base_dataset_repo_id: str = "reece-omahoney/libero"
+    base_dataset_repo_id: str = "lerobot/libero"
     n_episodes: int = 50
     n_envs: int = 16
     dataset_repo_id: str | None = "reece-omahoney/libero-10"

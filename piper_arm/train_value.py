@@ -5,6 +5,7 @@ Ground truth returns are computed analytically from steps_remaining + success.
 """
 
 import random
+from collections import Counter
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -33,6 +34,7 @@ class TrainValueConfig:
     pretrained_path: str = "reece-omahoney/smolvla-libero-16-chunk"
     c_fail: float = 1000.0
     reward_type: str = "steps_remaining"  # "steps_remaining" or "maha_distance"
+    load_stats: str = "outputs/eval_dist/latest/gauss_stats.npz"
 
     value: ValueConfig = field(default_factory=ValueConfig)
 
@@ -86,8 +88,8 @@ def compute_returns(
 
 
 def precompute_maha_returns(
-    dataset: LeRobotDataset,
-    max_episode_length: int,
+    maha: np.ndarray,
+    episode_index: np.ndarray,
 ) -> tuple[np.ndarray, float]:
     """Pre-compute per-frame returns using negative Mahalanobis distance as reward.
 
@@ -95,21 +97,14 @@ def precompute_maha_returns(
     to [-1, 0] by dividing by the max absolute return across all frames.
 
     Args:
-        dataset: LeRobot dataset with a ``maha_distance`` column.
-        max_episode_length: max steps in any episode (unused but kept for API
-            consistency; normalization is data-driven).
+        maha: (N,) float64 array of per-frame Mahalanobis distances.
+        episode_index: (N,) int array of episode indices.
 
     Returns:
         (returns, norm_constant) where *returns* is a ``(num_frames,)`` float64
         array of normalized returns in ``[-1, 0]`` and *norm_constant* is the
         divisor used for normalization.
     """
-    maha = np.array(
-        [s.item() for s in dataset.hf_dataset["maha_distance"]], dtype=np.float64
-    )
-    episode_index = np.array(
-        [s.item() for s in dataset.hf_dataset["episode_index"]], dtype=np.float64
-    )
 
     num_frames = len(maha)
     returns = np.zeros(num_frames, dtype=np.float64)
@@ -139,7 +134,7 @@ def precompute_maha_returns(
     return returns, float(norm_constant)
 
 
-VALUE_EXTRA_KEYS = ("steps_remaining", "success", "maha_distance", "index")
+VALUE_EXTRA_KEYS = ("success", "index")
 
 
 def batch_to_transition_with_extras(batch: dict[str, Any]) -> EnvTransition:
@@ -205,9 +200,14 @@ def main(cfg: TrainValueConfig):
         ds_kwargs["root"] = cfg.dataset_root
     dataset = LeRobotDataset(**ds_kwargs)
 
-    # Auto-detect max episode length from steps_remaining
-    all_steps = dataset.hf_dataset["steps_remaining"]
-    max_episode_length = max(s.item() for s in all_steps) + 1
+    frame_index = np.array([s.item() for s in dataset.hf_dataset["frame_index"]])
+    episode_index = np.array([s.item() for s in dataset.hf_dataset["episode_index"]])
+    ep_lengths = Counter(episode_index.tolist())
+    steps_remaining_arr = np.array(
+        [ep_lengths[ep] - fi - 1 for ep, fi in zip(episode_index, frame_index)],
+        dtype=np.int32,
+    )
+    max_episode_length = max(ep_lengths.values())
     print(f"Max episode length: {max_episode_length}")
     print(f"Dataset: {dataset.num_episodes} episodes, {dataset.num_frames} frames")
 
@@ -242,14 +242,49 @@ def main(cfg: TrainValueConfig):
         model.load_state_dict(ckpt["model_state_dict"])
         print(f"Loaded pretrained value model from {cfg.value_pretrained_path}")
 
-    # ── Pre-compute maha returns if needed ──
+    # ── Pre-compute returns tensors ──
+    steps_remaining_tensor = torch.tensor(
+        steps_remaining_arr, dtype=torch.float32, device=device
+    )
     maha_norm = None
     maha_returns_tensor = None
     if cfg.reward_type == "maha_distance":
-        print("Pre-computing Mahalanobis distance returns...")
-        maha_returns_arr, maha_norm = precompute_maha_returns(
-            dataset, max_episode_length
+        from lerobot.configs.policies import PreTrainedConfig
+        from lerobot.envs.configs import LiberoEnv as LiberoEnvConfig
+        from lerobot.policies.factory import make_policy, make_pre_post_processors
+        from lerobot.policies.pi05.modeling_pi05 import PI05Policy
+        from lerobot.policies.smolvla.modeling_smolvla import SmolVLAPolicy
+
+        from piper_arm.mahalanobis import compute_maha_distances
+
+        print("Loading policy for Mahalanobis distance computation...")
+        env_cfg = LiberoEnvConfig("libero_10", fps=10)
+        policy_cfg = PreTrainedConfig.from_pretrained(cfg.pretrained_path)
+        policy_cfg.pretrained_path = Path(cfg.pretrained_path)
+        policy_cfg.device = str(device)
+        maha_policy = make_policy(cfg=policy_cfg, env_cfg=env_cfg)
+        assert isinstance(maha_policy, (PI05Policy, SmolVLAPolicy))
+        maha_policy.eval()
+        policy_preprocessor, _ = make_pre_post_processors(
+            policy_cfg=policy_cfg, pretrained_path=str(policy_cfg.pretrained_path)
         )
+
+        data = np.load(cfg.load_stats)
+        gauss_mean = data["mean"]
+        gauss_cov_inv = data["cov_inv"]
+        print(f"Loaded Gaussian stats from {cfg.load_stats}, dim={gauss_mean.shape[0]}")
+
+        print("Pre-computing Mahalanobis distance returns...")
+        maha_arr = compute_maha_distances(
+            maha_policy,
+            policy_preprocessor,
+            dataset,
+            gauss_mean,
+            gauss_cov_inv,
+            cfg.batch_size,
+            cfg.num_workers,
+        )
+        maha_returns_arr, maha_norm = precompute_maha_returns(maha_arr, episode_index)
         maha_returns_tensor = torch.tensor(
             maha_returns_arr, dtype=torch.float32, device=device
         )
@@ -263,13 +298,13 @@ def main(cfg: TrainValueConfig):
         batch = next(data_iter)
         batch = preprocessor(batch)
 
+        indices = batch["index"].long().to(device)
         if cfg.reward_type == "maha_distance":
             assert maha_returns_tensor is not None
-            indices = batch["index"].long().to(device)
             returns = maha_returns_tensor[indices]
         else:
             returns = compute_returns(
-                batch["steps_remaining"],
+                steps_remaining_tensor[indices],
                 batch["success"],
                 max_episode_length,
                 cfg.c_fail,

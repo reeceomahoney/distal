@@ -44,6 +44,7 @@ class ComputeAdvantageLabelsConfig:
     batch_size: int = 64
     num_workers: int = 4
     push_to_hub: bool = True
+    new_dataset_repo_id: str = "reece-omahoney/libero-10-steps"
 
 
 def load_value_model(checkpoint_path: str, device: torch.device) -> ValueModel:
@@ -296,17 +297,16 @@ def main(cfg: ComputeAdvantageLabelsConfig):
     # Compute n-step advantages
     print(f"Computing {cfg.n_step}-step advantages...")
     if cfg.reward_type == "maha_distance":
-        from piper_arm.embedding import embed_prefix_pooled
-        from piper_arm.mahalanobis import compute_mahalanobis_np
+        from lerobot.policies.pi05.modeling_pi05 import PI05Policy
+        from lerobot.policies.smolvla.modeling_smolvla import SmolVLAPolicy
+
+        from piper_arm.mahalanobis import compute_maha_distances
 
         print("Loading policy for Mahalanobis distance computation...")
         env_cfg = LiberoEnvConfig("libero_10", fps=10)
         policy_cfg = PreTrainedConfig.from_pretrained(cfg.pretrained_path)
         policy_cfg.pretrained_path = Path(cfg.pretrained_path)
         policy_cfg.device = cfg.device
-        from lerobot.policies.pi05.modeling_pi05 import PI05Policy
-        from lerobot.policies.smolvla.modeling_smolvla import SmolVLAPolicy
-
         policy = make_policy(cfg=policy_cfg, env_cfg=env_cfg)
         assert isinstance(policy, (PI05Policy, SmolVLAPolicy))
         policy.eval()
@@ -319,29 +319,15 @@ def main(cfg: ComputeAdvantageLabelsConfig):
         gauss_cov_inv = data["cov_inv"]
         print(f"Loaded Gaussian stats from {cfg.load_stats}, dim={gauss_mean.shape[0]}")
 
-        print("Computing Mahalanobis distances...")
-        maha_loader = DataLoader(
+        maha_distance = compute_maha_distances(
+            policy,
+            policy_preprocessor,
             dataset,
-            batch_size=cfg.batch_size,
-            shuffle=False,
-            num_workers=cfg.num_workers,
-            pin_memory=True,
-            drop_last=False,
+            gauss_mean,
+            gauss_cov_inv,
+            cfg.batch_size,
+            cfg.num_workers,
         )
-        maha_list: list[float] = []
-        for batch in maha_loader:
-            batch = {
-                k: v.to(cfg.device) if isinstance(v, torch.Tensor) else v
-                for k, v in batch.items()
-            }
-            batch = policy_preprocessor(batch)
-            with torch.no_grad():
-                emb = embed_prefix_pooled(policy, batch)
-                dists = compute_mahalanobis_np(
-                    emb.cpu().numpy(), gauss_mean, gauss_cov_inv
-                )
-            maha_list.extend(dists.tolist())
-        maha_distance = np.array(maha_list, dtype=np.float64)
 
         ckpt = torch.load(cfg.value_checkpoint, map_location="cpu", weights_only=False)
         maha_norm = ckpt["maha_norm"]
@@ -415,6 +401,7 @@ def main(cfg: ComputeAdvantageLabelsConfig):
     # Push to hub
     if cfg.push_to_hub:
         print("Pushing dataset...")
+        dataset.repo_id = cfg.new_dataset_repo_id
         dataset.push_to_hub()
 
     print("Done.")
