@@ -3,7 +3,7 @@ name = "piper-arm"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
-requires-python = ">=3.10,<3.11"
+requires-python = ">=3.12"
 dependencies = [
   "lerobot[smolvla, libero, pi] @ git+https://github.com/huggingface/lerobot.git",
   "piper-sdk>=0.6.1",
