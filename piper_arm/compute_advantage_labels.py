@@ -13,13 +13,18 @@ Usage:
 """
 
 import json
+from collections import Counter
 from dataclasses import dataclass
+from pathlib import Path
 
 import draccus
 import numpy as np
 import pandas as pd
 import torch
+from lerobot.configs.policies import PreTrainedConfig
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
+from lerobot.envs.configs import LiberoEnv as LiberoEnvConfig
+from lerobot.policies.factory import make_policy, make_pre_post_processors
 from torch.utils.data import DataLoader
 
 from piper_arm.train_value import TrainValueConfig as TrainValueConfig
@@ -30,13 +35,15 @@ from piper_arm.value_model import ValueConfig, ValueModel
 @dataclass
 class ComputeAdvantageLabelsConfig:
     value_checkpoint: str = "outputs/value/2026-03-10/14-29-58/checkpoint_40000.pt"
+    # value_checkpoint: str = "outputs/value/2026-03-11/13-01-30/checkpoint_50000.pt"
     pretrained_path: str = "reece-omahoney/smolvla-libero-16-chunk"
-    dataset_repo_id: str = "reece-omahoney/libero-10-maha"
-    dataset_root: str | None = None
+    dataset_repo_id: str = "reece-omahoney/libero-10"
     c_fail: float = 1000.0
     reward_type: str = "steps_remaining"  # "steps_remaining" or "maha_distance"
+    load_stats: str = "outputs/eval_dist/latest/gauss_stats.npz"
+    device: str = "cuda"
     n_step: int = 10
-    advantage_percentile: float = 0.7
+    advantage_percentile: float = 0.6
     batch_size: int = 64
     num_workers: int = 4
     push_to_hub: bool = True
@@ -241,14 +248,18 @@ def binarize_advantages(
 def main(cfg: ComputeAdvantageLabelsConfig):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    # Load dataset
-    ds_kwargs: dict = {"repo_id": cfg.dataset_repo_id}
-    if cfg.dataset_root:
-        ds_kwargs["root"] = cfg.dataset_root
-    dataset = LeRobotDataset(**ds_kwargs)
+    dataset = LeRobotDataset(cfg.dataset_repo_id)
 
-    all_steps = dataset.hf_dataset["steps_remaining"]
-    max_episode_length = max(s.item() for s in all_steps) + 1
+    frame_index = np.array([s.item() for s in dataset.hf_dataset["frame_index"]])
+    episode_index_all = np.array(
+        [s.item() for s in dataset.hf_dataset["episode_index"]]
+    )
+    ep_lengths = Counter(episode_index_all.tolist())
+    steps_remaining = np.array(
+        [ep_lengths[ep] - fi - 1 for ep, fi in zip(episode_index_all, frame_index)],
+        dtype=np.int32,
+    )
+    max_episode_length = max(ep_lengths.values())
     print(f"Dataset: {dataset.num_episodes} episodes, {dataset.num_frames} frames")
     print(f"Max episode length: {max_episode_length}")
 
@@ -268,11 +279,8 @@ def main(cfg: ComputeAdvantageLabelsConfig):
     )
 
     # Extract episode metadata as arrays
-    steps_remaining = np.array(
-        [s.item() for s in dataset.hf_dataset["steps_remaining"]]
-    )
     success = np.array([s.item() for s in dataset.hf_dataset["success"]])
-    episode_index = np.array([s.item() for s in dataset.hf_dataset["episode_index"]])
+    episode_index = episode_index_all
 
     # Collect task strings (need a sequential pass through the dataset)
     print("Collecting task strings...")
@@ -291,10 +299,53 @@ def main(cfg: ComputeAdvantageLabelsConfig):
     # Compute n-step advantages
     print(f"Computing {cfg.n_step}-step advantages...")
     if cfg.reward_type == "maha_distance":
-        maha_distance = np.array(
-            [s.item() for s in dataset.hf_dataset["maha_distance"]],
-            dtype=np.float64,
+        from piper_arm.embedding import embed_prefix_pooled
+        from piper_arm.mahalanobis import compute_mahalanobis_np
+
+        print("Loading policy for Mahalanobis distance computation...")
+        env_cfg = LiberoEnvConfig("libero_10", fps=10)
+        policy_cfg = PreTrainedConfig.from_pretrained(cfg.pretrained_path)
+        policy_cfg.pretrained_path = Path(cfg.pretrained_path)
+        policy_cfg.device = cfg.device
+        from lerobot.policies.pi05.modeling_pi05 import PI05Policy
+        from lerobot.policies.smolvla.modeling_smolvla import SmolVLAPolicy
+
+        policy = make_policy(cfg=policy_cfg, env_cfg=env_cfg)
+        assert isinstance(policy, (PI05Policy, SmolVLAPolicy))
+        policy.eval()
+        policy_preprocessor, _ = make_pre_post_processors(
+            policy_cfg=policy_cfg, pretrained_path=str(policy_cfg.pretrained_path)
         )
+
+        data = np.load(cfg.load_stats)
+        gauss_mean = data["mean"]
+        gauss_cov_inv = data["cov_inv"]
+        print(f"Loaded Gaussian stats from {cfg.load_stats}, dim={gauss_mean.shape[0]}")
+
+        print("Computing Mahalanobis distances...")
+        maha_loader = DataLoader(
+            dataset,
+            batch_size=cfg.batch_size,
+            shuffle=False,
+            num_workers=cfg.num_workers,
+            pin_memory=True,
+            drop_last=False,
+        )
+        maha_list: list[float] = []
+        for batch in maha_loader:
+            batch = {
+                k: v.to(cfg.device) if isinstance(v, torch.Tensor) else v
+                for k, v in batch.items()
+            }
+            batch = policy_preprocessor(batch)
+            with torch.no_grad():
+                emb = embed_prefix_pooled(policy, batch)
+                dists = compute_mahalanobis_np(
+                    emb.cpu().numpy(), gauss_mean, gauss_cov_inv
+                )
+            maha_list.extend(dists.tolist())
+        maha_distance = np.array(maha_list, dtype=np.float64)
+
         ckpt = torch.load(cfg.value_checkpoint, map_location="cpu", weights_only=False)
         maha_norm = ckpt["maha_norm"]
         print(f"Loaded maha_norm={maha_norm:.4f} from checkpoint")
