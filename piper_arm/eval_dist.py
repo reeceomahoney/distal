@@ -16,7 +16,7 @@ from typing import Any
 import draccus
 import numpy as np
 from lerobot.configs.policies import PreTrainedConfig
-from lerobot.datasets.lerobot_dataset import LeRobotDataset
+from lerobot.datasets.lerobot_dataset import LeRobotDataset, LeRobotDatasetMetadata
 from lerobot.envs.configs import LiberoEnv as LiberoEnvConfig
 from lerobot.envs.factory import make_env, make_env_pre_post_processors
 from lerobot.policies.factory import make_policy, make_pre_post_processors
@@ -31,6 +31,7 @@ from piper_arm.rollout import build_frame, rollout
 @dataclass
 class EvalDistConfig:
     policy_path: str = "reece-omahoney/smolvla-libero-16-chunk"
+    base_dataset_repo_id: str = "reece-omahoney/libero"
     n_episodes: int = 50
     n_envs: int = 16
     dataset_repo_id: str | None = "reece-omahoney/libero-10"
@@ -59,23 +60,18 @@ def main(cfg: EvalDistConfig):
     env_preprocessor, env_postprocessor = make_env_pre_post_processors(
         env_cfg, policy_cfg
     )
+    base_meta = LeRobotDatasetMetadata(repo_id=cfg.base_dataset_repo_id)
 
     # ── Dataset setup ──
     dataset = None
     if cfg.dataset_repo_id:
-        assert policy_cfg.input_features is not None
-        assert policy_cfg.output_features is not None
-        features: dict[str, Any] = {
-            **policy_cfg.input_features,
-            **policy_cfg.output_features,
-        }
+        features = base_meta.features.copy()
         features["success"] = {"dtype": "bool", "shape": (1,), "names": None}
-        camera_keys = [k for k in features if k.startswith("observation.images.")]
         dataset = LeRobotDataset.create(
             repo_id=cfg.dataset_repo_id,
-            fps=10,
+            fps=int(base_meta.fps),
             features=features,
-            image_writer_threads=4 * len(camera_keys),
+            image_writer_threads=4 * len(base_meta.camera_keys),
         )
 
     # ── Rollout ──
