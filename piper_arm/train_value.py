@@ -31,7 +31,7 @@ from piper_arm.value_model import ValueConfig, ValueModel
 
 @dataclass
 class TrainValueConfig:
-    dataset_repo_id: str = "reece-omahoney/libero"
+    dataset_repo_id: str = "reece-omahoney/libero-10"
     dataset_root: str | None = None
     pretrained_path: str = "reece-omahoney/smolvla-libero-16-chunk"
     c_fail: float = 1000.0
