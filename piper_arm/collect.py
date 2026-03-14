@@ -4,11 +4,11 @@ Rolls out the policy in LIBERO, recording observations, actions, and
 per-episode success into a LeRobot dataset.
 """
 
+import multiprocessing
 import os
 
-os.environ.setdefault("MUJOCO_GL", "egl")
+os.environ["MUJOCO_GL"] = "egl"
 
-import multiprocessing
 import time
 from contextlib import nullcontext
 from dataclasses import dataclass
@@ -24,12 +24,11 @@ from lerobot.envs.factory import make_env, make_env_pre_post_processors
 from lerobot.policies.factory import make_policy, make_pre_post_processors
 from lerobot.policies.pi05.modeling_pi05 import PI05Policy
 from lerobot.policies.smolvla.modeling_smolvla import SmolVLAPolicy
+from lerobot.scripts.lerobot_eval import eval_policy as lerobot_eval_policy
+from lerobot.utils.import_utils import register_third_party_plugins
 from lerobot.utils.random_utils import set_seed
 from lerobot.utils.utils import get_safe_torch_device, init_logging
 from libero.libero import benchmark
-from tqdm import tqdm
-
-from piper_arm.rollout import build_frame, rollout
 
 multiprocessing.set_start_method("spawn", force=True)
 
@@ -47,9 +46,40 @@ class EvalDistConfig:
     use_amp: bool = True
 
 
+def write_episodes_to_dataset(
+    info: dict, dataset: LeRobotDataset, task_desc: str
+) -> None:
+    """Write episode data returned by lerobot's eval_policy into a LeRobot dataset."""
+    episodes = info["episodes"]
+    obs_keys = [k for k in episodes if k.startswith("observation.")]
+    features = dataset.meta.features
+
+    for ep_info in info["per_episode"]:
+        ep_ix = ep_info["episode_ix"]
+        mask = episodes["episode_index"] == ep_ix
+        # _compile_episode_data pads one extra copy frame per episode; drop it
+        indices = torch.where(mask)[0][:-1]
+
+        for idx in indices:
+            frame = {"action": episodes["action"][idx]}
+            for key in obs_keys:
+                if key not in features:
+                    continue
+                val = episodes[key][idx]
+                if key.startswith("observation.images."):
+                    frame[key] = (val.permute(1, 2, 0) * 255).to(torch.uint8)
+                else:
+                    frame[key] = val
+            frame["task"] = task_desc
+            frame["success"] = np.array([ep_info["success"]], dtype=bool)
+            dataset.add_frame(frame)
+        dataset.save_episode()
+
+
 @draccus.wrap()
 def main(cfg: EvalDistConfig):
     init_logging()
+    register_third_party_plugins()
 
     os.environ["SVT_LOG"] = "1"
     # os.environ["MUJOCO_EGL_DEVICE_ID"] = "0"
@@ -107,67 +137,35 @@ def main(cfg: EvalDistConfig):
                 task_envs = make_env(task_env_cfg, n_envs=cfg.n_envs)
                 vec_env = task_envs[suite_name][task_id]
                 task_desc = vec_env.call("task_description")[0]  # type: ignore[attr-defined]
+                print(f"\nTask {task_id + 1}/{n_tasks}: {task_desc}")
 
-                ep = 0
-                task_successes: list[bool] = []
-                pbar = tqdm(
-                    total=cfg.n_episodes,
-                    desc=f"Task {task_id + 1}/{n_tasks}",
-                    unit="ep",
+                info = lerobot_eval_policy(
+                    env=vec_env,
+                    policy=policy,
+                    env_preprocessor=env_preprocessor,
+                    env_postprocessor=env_postprocessor,
+                    preprocessor=preprocessor,
+                    postprocessor=postprocessor,
+                    n_episodes=cfg.n_episodes,
+                    return_episode_data=dataset is not None,
+                    start_seed=cfg.seed,
                 )
-                while ep < cfg.n_episodes:
-                    batch_seeds = list(range(ep, ep + cfg.n_envs))
-                    batch_results = rollout(
-                        policy=policy,
-                        vec_env=vec_env,
-                        preprocessor=preprocessor,
-                        postprocessor=postprocessor,
-                        env_preprocessor=env_preprocessor,
-                        env_postprocessor=env_postprocessor,
-                        seeds=batch_seeds,
-                        desc=f"  Ep {ep}-{ep + cfg.n_envs - 1}",
-                    )
 
-                    for i, result in enumerate(batch_results):
-                        ep_num = ep + i
-                        if ep_num >= cfg.n_episodes:
-                            break
-
-                        if dataset is not None:
-                            n_frames = len(result["observations"])
-                            for frame_idx in range(n_frames):
-                                frame = build_frame(
-                                    result["observations"][frame_idx],
-                                    result["actions"][frame_idx],
-                                    dataset.meta.features,
-                                )
-                                frame["task"] = task_desc
-                                frame["success"] = np.array(
-                                    [result["success"]], dtype=bool
-                                )
-                                dataset.add_frame(frame)
-                            dataset.save_episode()
-
-                        pbar.update(1)
-                        task_successes.append(result["success"])
-                        all_successes.append(result["success"])
-
-                    ep += cfg.n_envs
-                pbar.close()
-
+                task_successes = [ep["success"] for ep in info["per_episode"]]
+                all_successes.extend(task_successes)
+                n_success = sum(task_successes)
                 n = len(task_successes)
-                pct = 100 * sum(task_successes) / n
-                print(f"  Success rate: {sum(task_successes)}/{n} ({pct:.1f}%)")
+                print(f"  Success rate: {n_success}/{n} ({100 * n_success / n:.1f}%)")
 
+                write_episodes_to_dataset(info, dataset, task_desc)
                 vec_env.close()
     finally:
-        if dataset is not None:
-            dataset.finalize()
-            print(
-                f"Dataset saved to {dataset.root}"
-                f" ({dataset.num_episodes} episodes, {dataset.num_frames} frames)"
-            )
-            dataset.push_to_hub()
+        dataset.finalize()
+        print(
+            f"Dataset saved to {dataset.root}"
+            f" ({dataset.num_episodes} episodes, {dataset.num_frames} frames)"
+        )
+        dataset.push_to_hub()
 
     elapsed = time.monotonic() - t_start
     total_successes = sum(all_successes)

@@ -5,7 +5,7 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.12, <3.13"
 dependencies = [
-  "lerobot[smolvla, libero, pi] @ git+https://github.com/huggingface/lerobot.git",
+  "lerobot[smolvla, libero, pi] @ git+https://github.com/reeceomahoney/lerobot@fix/rollout-return-observations-nested-dict",
   "piper-sdk>=0.6.1",
   "opencv-contrib-python>=4.12.0.88",
   "pyrealsense2-macosx>=2.54.2; sys_platform == 'darwin'",
@@ -19,7 +19,7 @@ dependencies = [
 
 [dependency-groups]
 dev = ["pre-commit>=4.5.1", "ruff>=0.15.2", "ty>=0.0.21"]
-hardware = ["lerobot_robot_piper", "lerobot_teleoperator_piper"]
+# hardware = ["lerobot_robot_piper", "lerobot_teleoperator_piper"]
 
 [build-system]
 requires = ["hatchling"]

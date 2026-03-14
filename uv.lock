@@ -1127,7 +1127,7 @@ wheels = [
 [[package]]
 name = "lerobot"
 version = "0.5.1"
-source = { git = "https://github.com/huggingface/lerobot.git#0db5f66ddae6afd62454c418771286fa64dbea20" }
+source = { git = "https://github.com/reeceomahoney/lerobot?rev=fix%2Frollout-return-observations-nested-dict#0e56f78ead333ce04139870f711a149f422213f2" }
 dependencies = [
     { name = "accelerate" },
     { name = "av" },
@@ -1183,42 +1183,8 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "lerobot", extras = ["smolvla"], git = "https://github.com/huggingface/lerobot.git" },
+    { name = "lerobot", extras = ["smolvla"], git = "https://github.com/reeceomahoney/lerobot?rev=fix%2Frollout-return-observations-nested-dict" },
     { name = "piper-arm" },
-]
-
-[[package]]
-name = "lerobot-robot-piper"
-version = "0.1.0"
-source = { editable = "lerobot_robot_piper" }
-dependencies = [
-    { name = "lerobot" },
-    { name = "piper-sdk" },
-    { name = "pyrealsense2", marker = "sys_platform != 'darwin'" },
-    { name = "pyrealsense2-macosx", marker = "sys_platform == 'darwin'" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "lerobot", git = "https://github.com/huggingface/lerobot.git" },
-    { name = "piper-sdk", specifier = ">=0.6.1" },
-    { name = "pyrealsense2", marker = "sys_platform != 'darwin'", specifier = ">=2.56.5.9235" },
-    { name = "pyrealsense2-macosx", marker = "sys_platform == 'darwin'", specifier = ">=2.54.2" },
-]
-
-[[package]]
-name = "lerobot-teleoperator-piper"
-version = "0.1.0"
-source = { editable = "lerobot_teleoperator_piper" }
-dependencies = [
-    { name = "lerobot" },
-    { name = "piper-sdk" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "lerobot", git = "https://github.com/huggingface/lerobot.git" },
-    { name = "piper-sdk", specifier = ">=0.6.1" },
 ]
 
 [[package]]
@@ -1793,14 +1759,10 @@ dev = [
     { name = "ruff" },
     { name = "ty" },
 ]
-hardware = [
-    { name = "lerobot-robot-piper" },
-    { name = "lerobot-teleoperator-piper" },
-]
 
 [package.metadata]
 requires-dist = [
-    { name = "lerobot", extras = ["smolvla", "libero", "pi"], git = "https://github.com/huggingface/lerobot.git" },
+    { name = "lerobot", extras = ["smolvla", "libero", "pi"], git = "https://github.com/reeceomahoney/lerobot?rev=fix%2Frollout-return-observations-nested-dict" },
     { name = "lerobot-policy-advantage", editable = "lerobot_policy_advantage" },
     { name = "matplotlib", specifier = ">=3.7.0" },
     { name = "opencv-contrib-python", specifier = ">=4.12.0.88" },
@@ -1817,10 +1779,6 @@ dev = [
     { name = "pre-commit", specifier = ">=4.5.1" },
     { name = "ruff", specifier = ">=0.15.2" },
     { name = "ty", specifier = ">=0.0.21" },
-]
-hardware = [
-    { name = "lerobot-robot-piper", editable = "lerobot_robot_piper" },
-    { name = "lerobot-teleoperator-piper", editable = "lerobot_teleoperator_piper" },
 ]
 
 [[package]]
