@@ -26,7 +26,7 @@ from lerobot.policies.factory import make_policy, make_pre_post_processors
 from lerobot.policies.pi05.modeling_pi05 import PI05Policy
 from lerobot.policies.smolvla.modeling_smolvla import SmolVLAPolicy
 from lerobot.utils.random_utils import set_seed
-from lerobot.utils.utils import get_safe_torch_device
+from lerobot.utils.utils import get_safe_torch_device, init_logging
 from libero.libero import benchmark
 from tqdm import tqdm
 
@@ -40,8 +40,8 @@ class EvalDistConfig:
     policy_path: str = "reece-omahoney/smolvla-libero-16-chunk"
     base_dataset_repo_id: str = "lerobot/libero"
     n_episodes: int = 50
-    n_envs: int = 50
-    dataset_repo_id: str | None = "reece-omahoney/libero-10"
+    n_envs: int = 5
+    dataset_repo_id: str = "reece-omahoney/libero-10"
     device: str = "cuda"
     max_tasks: int | None = None  # limit number of tasks (None = all)
     seed: int = 0
@@ -50,6 +50,8 @@ class EvalDistConfig:
 
 @draccus.wrap()
 def main(cfg: EvalDistConfig):
+    init_logging()
+
     os.environ["SVT_LOG"] = "1"
 
     device = get_safe_torch_device(cfg.device, log=True)
@@ -79,16 +81,15 @@ def main(cfg: EvalDistConfig):
 
     # ── Dataset setup ──
     dataset = None
-    if cfg.dataset_repo_id:
-        features = base_meta.features.copy()
-        features["success"] = {"dtype": "bool", "shape": (1,), "names": None}
-        dataset = LeRobotDataset.create(
-            repo_id=cfg.dataset_repo_id,
-            fps=int(base_meta.fps),
-            features=features,
-            image_writer_threads=8 * len(base_meta.camera_keys),
-            vcodec="auto",
-        )
+    features = base_meta.features.copy()
+    features["success"] = {"dtype": "bool", "shape": (1,), "names": None}
+    dataset = LeRobotDataset.create(
+        repo_id=cfg.dataset_repo_id,
+        fps=int(base_meta.fps),
+        features=features,
+        streaming_encoding=True,
+        vcodec="auto",
+    )
 
     # ── Rollout ──
     suite = benchmark.get_benchmark_dict()[suite_name]()
