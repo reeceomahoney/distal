@@ -19,15 +19,14 @@ def build_frame(
     frame = {"action": action}
 
     for key in features:
-        val = obs.get(key)
-        if val is None:
+        if (val := obs.get(key)) is None:
             continue
-
-        if key.startswith("observation.images."):
-            # (C, H, W) float [0,1] -> (H, W, C) uint8
-            frame[key] = (val.permute(1, 2, 0) * 255).to(torch.uint8)
-        else:
-            frame[key] = val
+        # (C, H, W) float [0,1] -> (H, W, C) uint8
+        frame[key] = (
+            (val.permute(1, 2, 0) * 255).to(torch.uint8)
+            if key.startswith("observation.images.")
+            else val
+        )
 
     return frame
 

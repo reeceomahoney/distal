@@ -52,6 +52,7 @@ def main(cfg: EvalDistConfig):
     init_logging()
 
     os.environ["SVT_LOG"] = "1"
+    # os.environ["MUJOCO_EGL_DEVICE_ID"] = "0"
 
     device = get_safe_torch_device(cfg.device, log=True)
     torch.backends.cudnn.benchmark = True
@@ -63,7 +64,7 @@ def main(cfg: EvalDistConfig):
     env_cfg = LiberoEnvConfig(suite_name, fps=10)
     policy_cfg = PreTrainedConfig.from_pretrained(cfg.policy_path)
     policy_cfg.pretrained_path = Path(cfg.policy_path)
-    policy_cfg.device = cfg.device
+    policy_cfg.device = str(device)
     policy_cfg.use_amp = cfg.use_amp
 
     policy = make_policy(cfg=policy_cfg, env_cfg=env_cfg)
