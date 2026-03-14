@@ -42,7 +42,7 @@ class TrainValueConfig:
     value_pretrained_path: str | None = None
 
     # Training
-    batch_size: int = 32
+    batch_size: int = 256
     total_steps: int = 100_000
 
     # Logging & checkpointing
@@ -52,7 +52,7 @@ class TrainValueConfig:
     wandb_project: str | None = "distal-value"
     wandb_run_name: str | None = None
 
-    num_workers: int = 4
+    num_workers: int = 8
     seed: int = 42
 
 
@@ -229,6 +229,7 @@ def main(cfg: TrainValueConfig):
     smolvla_cfg = SmolVLAConfig()
     optimizer_cfg = smolvla_cfg.get_optimizer_preset()
     scheduler_cfg = smolvla_cfg.get_scheduler_preset()
+    scheduler_cfg.num_decay_steps = cfg.total_steps
 
     params = [p for p in model.parameters() if p.requires_grad]
     optimizer = optimizer_cfg.build(params)
