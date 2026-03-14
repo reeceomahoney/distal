@@ -13,7 +13,6 @@ import time
 from contextlib import nullcontext
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
 
 import draccus
 import numpy as np
@@ -96,7 +95,7 @@ def main(cfg: EvalDistConfig):
     n_tasks = len(suite.tasks)
     if cfg.max_tasks is not None:
         n_tasks = min(n_tasks, cfg.max_tasks)
-    all_results: list[dict[str, Any]] = []
+    all_successes: list[bool] = []
     t_start = time.monotonic()
 
     amp_ctx = torch.autocast(device_type=device.type) if cfg.use_amp else nullcontext()
@@ -109,7 +108,7 @@ def main(cfg: EvalDistConfig):
                 task_desc = vec_env.call("task_description")[0]  # type: ignore[attr-defined]
 
                 ep = 0
-                task_results: list[dict[str, Any]] = []
+                task_successes: list[bool] = []
                 pbar = tqdm(
                     total=cfg.n_episodes,
                     desc=f"Task {task_id + 1}/{n_tasks}",
@@ -149,16 +148,15 @@ def main(cfg: EvalDistConfig):
                             dataset.save_episode()
 
                         pbar.update(1)
-                        task_results.append(result)
-                        all_results.append(result)
+                        task_successes.append(result["success"])
+                        all_successes.append(result["success"])
 
                     ep += cfg.n_envs
                 pbar.close()
 
-                task_successes = sum(r["success"] for r in task_results)
-                n = len(task_results)
-                pct = 100 * task_successes / n
-                print(f"  Success rate: {task_successes}/{n} ({pct:.1f}%)")
+                n = len(task_successes)
+                pct = 100 * sum(task_successes) / n
+                print(f"  Success rate: {sum(task_successes)}/{n} ({pct:.1f}%)")
 
                 vec_env.close()
     finally:
@@ -171,8 +169,8 @@ def main(cfg: EvalDistConfig):
             dataset.push_to_hub()
 
     elapsed = time.monotonic() - t_start
-    total_successes = sum(r["success"] for r in all_results)
-    n = len(all_results)
+    total_successes = sum(all_successes)
+    n = len(all_successes)
     pct = 100 * total_successes / n
     print(f"\nOverall success rate: {total_successes}/{n} ({pct:.1f}%)")
     print(f"Total time: {elapsed:.1f}s ({elapsed / 60:.1f}min)")
