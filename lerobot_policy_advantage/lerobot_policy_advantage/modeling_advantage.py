@@ -72,6 +72,12 @@ class AdvantagePolicy(PreTrainedPolicy):
         if config.smolvla_checkpoint is not None:
             self.load_smolvla_weights(config.smolvla_checkpoint)
 
+        self.advantage_labels: torch.Tensor | None = None
+        if config.use_advantage_tokens:
+            dataset_meta = kwargs.get("dataset_meta")
+            if dataset_meta is not None:
+                self.advantage_labels = self.load_advantage_labels(dataset_meta.repo_id)
+
         self.reset()
 
     def load_smolvla_weights(self, smolvla_path: str):
@@ -96,6 +102,17 @@ class AdvantagePolicy(PreTrainedPolicy):
         logging.info(
             f"Loaded {loaded}/{len(weights)} SmolVLA weights from {smolvla_path}"
         )
+
+    @staticmethod
+    def load_advantage_labels(repo_id: str) -> torch.Tensor:
+        """Load advantage labels from a HuggingFace dataset repo."""
+        from datasets import load_dataset
+
+        logging.info(f"Loading advantage labels from {repo_id}...")
+        ds = load_dataset(repo_id, split="train")
+        labels = torch.tensor(ds["advantage_label"], dtype=torch.long)
+        logging.info(f"Loaded {len(labels)} advantage labels")
+        return labels
 
     def reset(self):
         self.queues = {ACTION: deque(maxlen=self.config.n_action_steps)}
@@ -138,8 +155,9 @@ class AdvantagePolicy(PreTrainedPolicy):
         device = prefix_embs.device
 
         if self.config.use_advantage_tokens:
-            # Read pre-computed advantage labels
-            adv_labels = batch["advantage_label"].long().to(device)
+            # Look up pre-computed advantage labels by absolute frame index
+            indices = batch["index"].long().cpu()
+            adv_labels = self.advantage_labels[indices].to(device)
 
             # 2. Embed advantage token
             adv_embs = self.adv_embedding(adv_labels).to(dtype=prefix_embs.dtype)
