@@ -71,6 +71,8 @@ class AdvantagePolicy(PreTrainedPolicy):
 
         if config.smolvla_checkpoint is not None:
             self.load_smolvla_weights(config.smolvla_checkpoint)
+            # Clear so saved configs won't re-load base weights on resume/eval
+            config.smolvla_checkpoint = None
 
         self.advantage_labels: torch.Tensor | None = None
         if config.use_advantage_tokens:
@@ -156,6 +158,7 @@ class AdvantagePolicy(PreTrainedPolicy):
 
         if self.config.use_advantage_tokens:
             # Look up pre-computed advantage labels by absolute frame index
+            assert self.advantage_labels is not None
             indices = batch["index"].long().cpu()
             adv_labels = self.advantage_labels[indices].to(device)
 
