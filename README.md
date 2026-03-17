@@ -8,11 +8,11 @@ The system implements a multi-stage training pipeline:
 
 1. **Collect rollouts** — Roll out and record a base VLA policy.
 
-2. **Train value function** — Train a distributional value model using cross-entropy over discretized return bins. Supports both step-based and Mahalanobis distance-based reward signals.
+1. **Train value function** — Train a distributional value model using cross-entropy over discretized return bins. Supports both step-based and Mahalanobis distance-based reward signals.
 
-3. **Compute advantage labels** — Use the trained value model to compute n-step TD advantages for every frame, then binarize them using per-task percentile thresholds.
+1. **Compute advantage labels** — Use the trained value model to compute n-step TD advantages for every frame, then binarize them using per-task percentile thresholds.
 
-4. **Fine-tune with advantage conditioning** — Fine-tune the VLA with binary advantage tokens.
+1. **Fine-tune with advantage conditioning** — Fine-tune the VLA with binary advantage tokens.
 
 ## Project Structure
 

@@ -50,9 +50,9 @@ slurm_tools has its own git repo, use this to push changes
 The system implements a RECAP-style RL pipeline:
 
 1. **collect.py** — Roll out policy in LIBERO sim using LeRobot's `eval_policy()`, create LeRobot dataset with `maha_distance`, `steps_remaining`, `success` fields.
-2. **train_value.py** — Train distributional value function (SmolVLM + expert backbone, cross-entropy over discretized return bins).
-3. **compute_advantage_labels.py** — Pre-compute binary advantage labels using the trained value model. Computes per-task advantage thresholds (30th percentile), binarizes per-sample advantages, and writes an `advantage_label` column directly into the dataset's parquet files.
-4. **lerobot-train (advantage_train.yaml)** — Fine-tune SmolVLA with binary advantage conditioning via the `lerobot_policy_advantage` plugin. 30% advantage token dropout for classifier-free guidance.
+1. **train_value.py** — Train distributional value function (SmolVLM + expert backbone, cross-entropy over discretized return bins).
+1. **compute_advantage_labels.py** — Pre-compute binary advantage labels using the trained value model. Computes per-task advantage thresholds (30th percentile), binarizes per-sample advantages, and writes an `advantage_label` column directly into the dataset's parquet files.
+1. **lerobot-train (advantage_train.yaml)** — Fine-tune SmolVLA with binary advantage conditioning via the `lerobot_policy_advantage` plugin. 30% advantage token dropout for classifier-free guidance.
 
 ### Advantage Policy Plugin (`lerobot_policy_advantage/`)
 
