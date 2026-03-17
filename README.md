@@ -46,7 +46,7 @@ configs/                            # YAML configs for all workflows
 
 ## Setup
 
-Requires Python 3.12 and [UV](https://docs.astral.sh/uv/):
+Requires Python 3.12 and [uv](https://docs.astral.sh/uv/):
 
 ```bash
 uv sync
