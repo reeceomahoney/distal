@@ -12,9 +12,7 @@ Robotic imitation learning system for the Piper robotic arm. Uses Hugging Face's
 
 ```bash
 # Training & evaluation (all use UV + LeRobot CLI under the hood)
-mise run train              # Train policy (lerobot-train --config_path configs/train.yaml)
-mise run finetune           # Fine-tune SmolVLA policy
-mise run train-advantage    # Advantage-conditioned policy fine-tuning
+mise run train              # Train policy (lerobot-train --config_path configs/advantage_train.yaml)
 mise run eval               # Evaluate policy in LIBERO sim
 
 # Hardware

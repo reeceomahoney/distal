@@ -5,7 +5,7 @@ _.python.venv = ".venv"
 
 [tasks.train]
 description = "Train policy"
-run = "lerobot-train --config_path configs/train.yaml"
+run = "lerobot-train --config_path configs/advantage_train.yaml"
 
 [tasks.eval]
 description = "Evaluate policy in LIBERO sim"

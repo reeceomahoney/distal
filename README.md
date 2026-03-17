@@ -65,7 +65,7 @@ mise run eval               # Evaluate in LIBERO simulation
 uv run python -m distal.collect
 uv run python -m distal.train_value
 uv run python -m distal.compute_advantage_labels
-mise run train              # with configs/advantage_train.yaml
+mise run train
 
 # Hardware
 mise run record             # Record demonstrations via teleop
