@@ -15,6 +15,7 @@ dependencies = [
   "rerun-sdk>=0.22",
   "lerobot_policy_advantage",
   "slurm-tools",
+  "vastai>=0.2.8",
 ]
 
 [dependency-groups]

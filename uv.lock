@@ -522,6 +522,7 @@ dependencies = [
     { name = "rerun-sdk" },
     { name = "scikit-learn" },
     { name = "slurm-tools" },
+    { name = "vastai" },
 ]
 
 [package.dev-dependencies]
@@ -543,6 +544,7 @@ requires-dist = [
     { name = "rerun-sdk", specifier = ">=0.22" },
     { name = "scikit-learn", specifier = ">=1.3.0" },
     { name = "slurm-tools", git = "https://github.com/reeceomahoney/slurm-tools.git" },
+    { name = "vastai", specifier = ">=0.2.8" },
 ]
 
 [package.metadata.requires-dev]
@@ -2818,6 +2820,18 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/c7/24/5f1b3bdffd70275f6661c76461e25f024d5a38a46f04aaca912426a2b1d3/urllib3-2.6.3.tar.gz", hash = "sha256:1b62b6884944a57dbe321509ab94fd4d3b307075e0c2eae991ac71ee15ad38ed", size = 435556, upload-time = "2026-01-07T16:24:43.925Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/39/08/aaaad47bc4e9dc8c725e68f9d04865dbcb2052843ff09c97b08904852d84/urllib3-2.6.3-py3-none-any.whl", hash = "sha256:bf272323e553dfb2e87d9bfd225ca7b0f467b919d7bbd355436d3fd37cb0acd4", size = 131584, upload-time = "2026-01-07T16:24:42.685Z" },
+]
+
+[[package]]
+name = "vastai"
+version = "0.2.8"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "requests" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/83/2f/4c0da2eb30cbadaf69505db3172422d9ae44dfc22d623fb8a94d4bfedc7e/vastai-0.2.8.tar.gz", hash = "sha256:efbc9976c01709bf5bdb604b9c8e192f34bbbed273ca10b484bd885e01c69303", size = 73729, upload-time = "2024-12-10T06:27:06.664Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/36/d0/e8c73570452538f3f23f4f519fc029a17b718cf411be5a5e36086a095dc7/vastai-0.2.8-py3-none-any.whl", hash = "sha256:1818e448fef894f35ba9e3c0a7a79621fd01342bdd60afd1b20d38ab19f3af3b", size = 58851, upload-time = "2024-12-10T06:27:04.098Z" },
 ]
 
 [[package]]
