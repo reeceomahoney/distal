@@ -21,13 +21,7 @@ from lerobot.utils.constants import ACTION
 from lerobot.utils.utils import inside_slurm
 from tqdm import tqdm
 
-from distal.train_value import TrainValueConfig as TrainValueConfig
-from distal.train_value import load_value_preprocessor
-from distal.value_model import ValueConfig, ValueModel
-
-# sys.modules["piper_arm"] = distal
-# sys.modules["piper_arm.value_model"] = distal.value_model
-# sys.modules["piper_arm.train_value"] = distal.train_value
+from distal.value_model import ValueFunction
 
 
 @dataclass
@@ -42,23 +36,13 @@ class RolloutValueVizConfig:
     output_dir: str = "outputs/rollout_value_viz"
 
 
-def load_value_model(checkpoint_path: str, device: torch.device) -> ValueModel:
-    ckpt = torch.load(checkpoint_path, map_location=device, weights_only=False)
-    cfg: ValueConfig = ckpt["config"].value
-    model = ValueModel(cfg)
-    model.load_state_dict(ckpt["model_state_dict"])
-    model = model.to(device)
-    model.eval()
-    return model
-
-
 def to_hwc_uint8(chw_float: torch.Tensor) -> np.ndarray:
     return (chw_float.clamp(0, 1) * 255).to(torch.uint8).permute(1, 2, 0).cpu().numpy()
 
 
 def rollout_with_values(
     policy: SmolVLAPolicy,
-    value_model: ValueModel,
+    value_model: ValueFunction,
     value_preprocessor,
     vec_env,
     preprocessor,
@@ -95,8 +79,7 @@ def rollout_with_values(
                 for k, v in raw_obs.items()
             }
             value_batch = value_preprocessor(obs_i)
-            logits = value_model(value_batch)
-            value = value_model.predict_value(logits).item()
+            value = value_model.predict_value(value_batch).item()
 
         # Collect frame data
         frame = {"step": step, "value": value}
@@ -170,8 +153,12 @@ def main(cfg: RolloutValueVizConfig):
     )
 
     # Load value model & value preprocessor
-    value_model = load_value_model(cfg.value_checkpoint, device)
-    value_preprocessor = load_value_preprocessor(cfg.policy_path)
+    value_model = ValueFunction.from_pretrained(cfg.value_checkpoint)
+    value_model.to(device).eval()
+    value_policy_cfg = PreTrainedConfig.from_pretrained(cfg.policy_path)
+    value_preprocessor, _ = make_pre_post_processors(
+        value_policy_cfg, pretrained_path=cfg.policy_path
+    )
     print(f"Loaded value model from {cfg.value_checkpoint}")
 
     # Rollout

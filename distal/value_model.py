@@ -7,11 +7,19 @@ The value head predicts returns as a categorical distribution over discrete bins
 """
 
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import cast
 
 import torch
 import torch.nn.functional as F
+from lerobot.configs.policies import PreTrainedConfig
+from lerobot.configs.types import NormalizationMode
+from lerobot.optim.optimizers import AdamWConfig, OptimizerConfig
+from lerobot.optim.schedulers import (
+    CosineDecayWithWarmupSchedulerConfig,
+    LRSchedulerConfig,
+)
+from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.policies.smolvla.modeling_smolvla import (
     make_att_2d_masks,
     pad_tensor,
@@ -27,8 +35,9 @@ from lerobot.utils.constants import (
 from torch import Tensor, nn
 
 
+@PreTrainedConfig.register_subclass("value")
 @dataclass
-class ValueConfig:
+class ValueConfig(PreTrainedConfig):
     vlm_model_name: str = "HuggingFaceTB/SmolVLM2-500M-Video-Instruct"
     expert_width_multiplier: float = 0.5
     resize_imgs_with_padding: tuple[int, int] = (256, 256)
@@ -42,11 +51,59 @@ class ValueConfig:
     freeze_vision_encoder: bool = True
     train_expert_only: bool = False
 
+    # Optimizer/scheduler
+    optimizer_lr: float = 2e-5
+    optimizer_weight_decay: float = 0.0
+    optimizer_grad_clip_norm: float = 10.0
+    scheduler_warmup_steps: int = 1_000
+    scheduler_decay_steps: int = 50_000
+    scheduler_decay_lr: float = 2.5e-6
 
-class ValueModel(nn.Module):
-    def __init__(self, config: ValueConfig):
-        super().__init__()
-        self.config = config
+    normalization_mapping: dict[str, NormalizationMode] = field(
+        default_factory=lambda: {
+            "VISUAL": NormalizationMode.IDENTITY,
+            "STATE": NormalizationMode.IDENTITY,
+        }
+    )
+
+    @property
+    def observation_delta_indices(self) -> list | None:
+        return None
+
+    @property
+    def action_delta_indices(self) -> list | None:
+        return None
+
+    @property
+    def reward_delta_indices(self) -> list | None:
+        return None
+
+    def get_optimizer_preset(self) -> OptimizerConfig:
+        return AdamWConfig(
+            lr=self.optimizer_lr,
+            weight_decay=self.optimizer_weight_decay,
+            grad_clip_norm=self.optimizer_grad_clip_norm,
+        )
+
+    def get_scheduler_preset(self) -> LRSchedulerConfig:
+        return CosineDecayWithWarmupSchedulerConfig(
+            peak_lr=self.optimizer_lr,
+            decay_lr=self.scheduler_decay_lr,
+            num_warmup_steps=self.scheduler_warmup_steps,
+            num_decay_steps=self.scheduler_decay_steps,
+        )
+
+    def validate_features(self) -> None:
+        pass
+
+
+class ValueFunction(PreTrainedPolicy):
+    name = "value"
+    config_class = ValueConfig
+    config: ValueConfig
+
+    def __init__(self, config: ValueConfig, **kwargs):
+        super().__init__(config)
 
         self.vlm_with_expert = SmolVLMWithExpertModel(
             model_id=config.vlm_model_name,
@@ -79,6 +136,9 @@ class ValueModel(nn.Module):
         # Bin centers for computing expected value
         self.register_buffer("bin_centers", torch.linspace(-1.0, 0.0, config.n_bins))
 
+        # Optional normalization constant for Mahalanobis distance rewards
+        self.register_buffer("maha_norm", torch.tensor(0.0))
+
         # Special tokens for image wrapping
         self.fake_image_token = (
             self.vlm_with_expert.processor.tokenizer.fake_image_token_id
@@ -93,18 +153,14 @@ class ValueModel(nn.Module):
         self.add_image_special_tokens = config.add_image_special_tokens
         self.prefix_length = config.prefix_length
 
-        self._set_requires_grad()
+        self.set_requires_grad()
 
-    def _set_requires_grad(self):
+    def set_requires_grad(self):
         """Freeze vision encoder. VLM + expert + heads stay trainable."""
-        # Vision encoder: frozen
         vision_model = self.vlm_with_expert.get_vlm_model().vision_model
         vision_model.eval()
         for p in vision_model.parameters():
             p.requires_grad = False
-
-        # VLM language model: trainable (train_expert_only=False already handles this)
-        # Expert + value_query + value_head + state_proj: trainable by default
 
     def train(self, mode: bool = True):
         super().train(mode)
@@ -240,7 +296,7 @@ class ValueModel(nn.Module):
         state = state[:, -1] if state.ndim > 2 else state
         return pad_vector(state, self.config.max_state_dim)
 
-    def forward(self, batch: dict[str, Tensor]) -> Tensor:
+    def compute_logits(self, batch: dict[str, Tensor]) -> Tensor:
         """Forward pass returning logits over value bins.
 
         Args:
@@ -292,7 +348,39 @@ class ValueModel(nn.Module):
         logits = self.value_head(suffix_out.squeeze(1))  # (B, n_bins)
         return logits
 
-    def predict_value(self, logits: Tensor) -> Tensor:
+    def forward(self, batch: dict[str, Tensor]) -> tuple[Tensor, dict]:
+        """Training forward pass: compute cross-entropy loss over value bins.
+
+        Expects batch to contain a "returns" key with (B,) float tensor in [-1, 0].
+
+        Returns:
+            (loss, {"mae": float})
+        """
+        logits = self.compute_logits(batch)
+        returns = batch["returns"]
+        targets = self.returns_to_bins(returns, self.config.n_bins)
+        loss = F.cross_entropy(logits, targets)
+
+        with torch.no_grad():
+            pred_values = self.logits_to_value(logits)
+            mae = (pred_values - returns).abs().mean().item()
+
+        return loss, {"mae": mae}
+
+    def predict_value(self, batch: dict[str, Tensor]) -> Tensor:
+        """Compute expected value for a batch of observations.
+
+        Args:
+            batch: Preprocessed batch dict with observation.images.*, observation.state,
+                   observation.language.tokens, observation.language.attention_mask.
+
+        Returns:
+            (B,) float tensor of predicted values.
+        """
+        logits = self.compute_logits(batch)
+        return self.logits_to_value(logits)
+
+    def logits_to_value(self, logits: Tensor) -> Tensor:
         """Expected value from logits via softmax + dot with bin centers."""
         probs = F.softmax(logits, dim=-1)
         return (probs * cast(Tensor, self.bin_centers)).sum(dim=-1)
@@ -313,3 +401,15 @@ class ValueModel(nn.Module):
         bin_indices = ((returns + 1.0) * (n_bins - 1)).long()
         bin_indices = bin_indices.clamp(0, n_bins - 1)
         return F.one_hot(bin_indices, num_classes=n_bins).float()
+
+    def select_action(self, batch: dict[str, Tensor], **kwargs) -> Tensor:
+        raise NotImplementedError("ValueFunction does not produce actions.")
+
+    def predict_action_chunk(self, batch: dict[str, Tensor], **kwargs) -> Tensor:
+        raise NotImplementedError("ValueFunction does not produce actions.")
+
+    def reset(self):
+        pass
+
+    def get_optim_params(self) -> dict:
+        return {"params": [p for p in self.parameters() if p.requires_grad]}

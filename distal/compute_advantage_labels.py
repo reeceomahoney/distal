@@ -24,9 +24,7 @@ from lerobot.envs.configs import LiberoEnv as LiberoEnvConfig
 from lerobot.policies.factory import make_policy, make_pre_post_processors
 from torch.utils.data import DataLoader
 
-from distal.train_value import TrainValueConfig as TrainValueConfig
-from distal.train_value import load_value_preprocessor
-from distal.value_model import ValueConfig, ValueModel
+from distal.value_model import ValueFunction
 
 
 @dataclass
@@ -52,22 +50,9 @@ class ComputeAdvantageLabelsConfig:
     new_dataset_repo_id: str = "reece-omahoney/libero-10-maha-adv"
 
 
-def load_value_model(checkpoint_path: str, device: torch.device) -> ValueModel:
-    """Load a trained value model from checkpoint."""
-    ckpt = torch.load(checkpoint_path, map_location=device, weights_only=False)
-    cfg: ValueConfig = ckpt["config"].value
-    model = ValueModel(cfg)
-    model.load_state_dict(ckpt["model_state_dict"])
-    model = model.to(device)
-    model.eval()
-    for p in model.parameters():
-        p.requires_grad = False
-    return model
-
-
 def compute_all_values(
     dataset: LeRobotDataset,
-    value_model: ValueModel,
+    value_model: ValueFunction,
     preprocessor,
     batch_size: int = 64,
     num_workers: int = 4,
@@ -94,8 +79,7 @@ def compute_all_values(
 
         batch = preprocessor(batch)
         with torch.no_grad():
-            logits = value_model(batch)
-            values = value_model.predict_value(logits)
+            values = value_model.predict_value(batch)
         all_values.extend(values.cpu().tolist())
 
     return np.array(all_values, dtype=np.float64)
@@ -268,8 +252,12 @@ def main(cfg: ComputeAdvantageLabelsConfig):
 
     # Load value model & preprocessor
     print("Loading value model...")
-    value_model: ValueModel = load_value_model(cfg.value_checkpoint, device)
-    preprocessor = load_value_preprocessor(cfg.pretrained_path)
+    value_model = ValueFunction.from_pretrained(cfg.value_checkpoint)
+    value_model.to(device).eval()
+    policy_cfg = PreTrainedConfig.from_pretrained(cfg.pretrained_path)
+    preprocessor, _ = make_pre_post_processors(
+        policy_cfg, pretrained_path=cfg.pretrained_path
+    )
 
     # Compute V(s) for all samples
     print("Computing values for all samples...")
@@ -335,9 +323,8 @@ def main(cfg: ComputeAdvantageLabelsConfig):
             cfg.num_workers,
         )
 
-        ckpt = torch.load(cfg.value_checkpoint, map_location="cpu", weights_only=False)
-        maha_norm = ckpt["maha_norm"]
-        print(f"Loaded maha_norm={maha_norm:.4f} from checkpoint")
+        maha_norm = value_model.get_buffer("maha_norm").item()
+        print(f"Loaded maha_norm={maha_norm:.4f} from value model")
         advantages = compute_nstep_advantages_maha(
             values,
             maha_distance,

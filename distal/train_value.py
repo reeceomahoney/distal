@@ -10,22 +10,17 @@ from contextlib import nullcontext
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any
 
 import draccus
 import numpy as np
 import torch
-import torch.nn.functional as F
+from lerobot.configs.policies import PreTrainedConfig
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.datasets.utils import cycle
-from lerobot.policies.smolvla.configuration_smolvla import SmolVLAConfig
-from lerobot.processor import PolicyProcessorPipeline
-from lerobot.processor.converters import batch_to_transition
-from lerobot.processor.pipeline import EnvTransition, TransitionKey
-from lerobot.utils.constants import POLICY_PREPROCESSOR_DEFAULT_NAME
+from lerobot.policies.factory import make_pre_post_processors
 from torch.utils.data import DataLoader
 
-from distal.value_model import ValueConfig, ValueModel
+from distal.value_model import ValueConfig, ValueFunction
 
 
 @dataclass
@@ -38,9 +33,6 @@ class TrainValueConfig:
     load_stats: str = "outputs/eval_dist/latest/gauss_stats.npz"
 
     value: ValueConfig = field(default_factory=ValueConfig)
-
-    # Resume from a previous value-model checkpoint (.pt file)
-    value_pretrained_path: str | None = None
 
     # Training
     batch_size: int = 32
@@ -136,37 +128,6 @@ def precompute_maha_returns(
     return returns, float(norm_constant)
 
 
-VALUE_EXTRA_KEYS = ("success", "index")
-
-
-def batch_to_transition_with_extras(batch: dict[str, Any]) -> EnvTransition:
-    """Wrap batch_to_transition to preserve value-training keys.
-
-    The default converter only extracts known keys (task, index, etc.) into
-    complementary_data. This version also preserves steps_remaining and success.
-    """
-    transition = batch_to_transition(batch)
-    comp = transition.get(TransitionKey.COMPLEMENTARY_DATA) or {}
-    for key in VALUE_EXTRA_KEYS:
-        if key in batch and key not in comp:
-            comp[key] = batch[key]
-    transition[TransitionKey.COMPLEMENTARY_DATA] = comp
-    return transition
-
-
-def load_value_preprocessor(pretrained_path: str):
-    """Load preprocessor from a pretrained SmolVLA checkpoint.
-
-    Image preprocessing and state padding are handled inside ValueModel.forward.
-    """
-    preprocessor = PolicyProcessorPipeline.from_pretrained(
-        pretrained_model_name_or_path=pretrained_path,
-        config_filename=f"{POLICY_PREPROCESSOR_DEFAULT_NAME}.json",
-        to_transition=batch_to_transition_with_extras,  # type: ignore[invalid-argument-type]
-    )
-    return preprocessor
-
-
 @draccus.wrap()
 def main(cfg: TrainValueConfig):
     random.seed(cfg.seed)
@@ -223,27 +184,26 @@ def main(cfg: TrainValueConfig):
     )
 
     # ── Model & preprocessor ──
-    model = ValueModel(cfg.value)
+    if cfg.value.pretrained_path:
+        model = ValueFunction.from_pretrained(str(cfg.value.pretrained_path))
+        print(f"Loaded pretrained value model from {cfg.value.pretrained_path}")
+    else:
+        model = ValueFunction(cfg.value)
     model = model.to(device)
-    preprocessor = load_value_preprocessor(cfg.pretrained_path)
+    policy_cfg = PreTrainedConfig.from_pretrained(cfg.pretrained_path)
+    preprocessor, _ = make_pre_post_processors(
+        policy_cfg, pretrained_path=cfg.pretrained_path
+    )
 
-    # ── Optimizer & scheduler (SmolVLA presets) ──
-    smolvla_cfg = SmolVLAConfig()
-    optimizer_cfg = smolvla_cfg.get_optimizer_preset()
-    scheduler_cfg = smolvla_cfg.get_scheduler_preset()
-    scheduler_cfg.num_decay_steps = cfg.total_steps
+    # ── Optimizer & scheduler ──
+    optimizer_cfg = cfg.value.get_optimizer_preset()
+    scheduler_cfg = cfg.value.get_scheduler_preset()
 
     params = [p for p in model.parameters() if p.requires_grad]
     optimizer = optimizer_cfg.build(params)
+    assert isinstance(optimizer, torch.optim.Optimizer)
     scheduler = scheduler_cfg.build(optimizer, num_training_steps=cfg.total_steps)
-
-    # ── Load pretrained value checkpoint ──
-    if cfg.value_pretrained_path:
-        ckpt = torch.load(
-            cfg.value_pretrained_path, map_location=device, weights_only=False
-        )
-        model.load_state_dict(ckpt["model_state_dict"])
-        print(f"Loaded pretrained value model from {cfg.value_pretrained_path}")
+    assert scheduler is not None
 
     # ── Pre-compute returns tensors ──
     steps_remaining_tensor = torch.tensor(
@@ -252,9 +212,8 @@ def main(cfg: TrainValueConfig):
     maha_norm = None
     maha_returns_tensor = None
     if cfg.reward_type == "maha_distance":
-        from lerobot.configs.policies import PreTrainedConfig
         from lerobot.envs.configs import LiberoEnv as LiberoEnvConfig
-        from lerobot.policies.factory import make_policy, make_pre_post_processors
+        from lerobot.policies.factory import make_policy
         from lerobot.policies.pi05.modeling_pi05 import PI05Policy
         from lerobot.policies.smolvla.modeling_smolvla import SmolVLAPolicy
 
@@ -292,6 +251,7 @@ def main(cfg: TrainValueConfig):
             maha_returns_arr, dtype=torch.float32, device=device
         )
         print(f"Maha norm constant: {maha_norm:.4f}")
+        model.get_buffer("maha_norm").fill_(maha_norm)
 
     # ── Training loop ──
     model.train()
@@ -304,24 +264,25 @@ def main(cfg: TrainValueConfig):
 
     for step in range(1, cfg.total_steps + 1):
         batch = next(data_iter)
+        success = batch.get("success")
+        indices = batch["index"].long().to(device)
         batch = preprocessor(batch)
 
-        indices = batch["index"].long().to(device)
         if cfg.reward_type == "maha_distance":
             assert maha_returns_tensor is not None
             returns = maha_returns_tensor[indices]
         else:
             returns = compute_returns(
                 steps_remaining_tensor[indices],
-                batch["success"],
+                success,
                 max_episode_length,
                 cfg.c_fail,
             )
 
+        batch["returns"] = returns
+
         with autocast:
-            logits = model(batch)
-            targets = ValueModel.returns_to_bins(returns, cfg.value.n_bins)
-            loss = F.cross_entropy(logits, targets)
+            loss, info = model(batch)
 
         loss.backward()
         torch.nn.utils.clip_grad_norm_(params, optimizer_cfg.grad_clip_norm)
@@ -331,13 +292,9 @@ def main(cfg: TrainValueConfig):
 
         # ── Logging ──
         if step % cfg.log_interval == 0:
-            with torch.no_grad():
-                pred_values = model.predict_value(logits)
-                mae = (pred_values - returns).abs().mean().item()
-
             log = {
                 "loss": loss.item(),
-                "mae": mae,
+                "mae": info["mae"],
                 "lr": scheduler.get_last_lr()[0],
                 "step": step,
             }
@@ -351,30 +308,14 @@ def main(cfg: TrainValueConfig):
 
         # ── Checkpointing ──
         if step % cfg.save_interval == 0:
-            ckpt_path = output_dir / f"checkpoint_{step}.pt"
-            ckpt_data: dict[str, Any] = {
-                "step": step,
-                "model_state_dict": model.state_dict(),
-                "optimizer_state_dict": optimizer.state_dict(),
-                "config": cfg,
-            }
-            if maha_norm is not None:
-                ckpt_data["maha_norm"] = maha_norm
-            torch.save(ckpt_data, ckpt_path)
-            print(f"Saved checkpoint: {ckpt_path}")
+            ckpt_dir = output_dir / f"checkpoint_{step}"
+            model.save_pretrained(ckpt_dir)
+            print(f"Saved checkpoint: {ckpt_dir}")
 
     # Save final checkpoint
-    final_path = output_dir / "checkpoint_final.pt"
-    final_ckpt_data: dict[str, Any] = {
-        "step": cfg.total_steps,
-        "model_state_dict": model.state_dict(),
-        "optimizer_state_dict": optimizer.state_dict(),
-        "config": cfg,
-    }
-    if maha_norm is not None:
-        final_ckpt_data["maha_norm"] = maha_norm
-    torch.save(final_ckpt_data, final_path)
-    print(f"Training complete. Final checkpoint: {final_path}")
+    final_dir = output_dir / "checkpoint_final"
+    model.save_pretrained(final_dir)
+    print(f"Training complete. Final checkpoint: {final_dir}")
 
 
 if __name__ == "__main__":
