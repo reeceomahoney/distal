@@ -43,7 +43,7 @@ NVJSON
     export TOKENIZERS_PARALLELISM=false
 
     # Cache directories
-    export CACHE_DIR=${CACHE_DIR:-/data/engs-robotics-ml/kebl6123/distal/.cache}
+    export CACHE_DIR=${CACHE_DIR:-/data/engs-robotics-ml/kebl6123/.cache}
     export UV_CACHE_DIR=$CACHE_DIR/uv
     export HF_HOME=$CACHE_DIR/huggingface
     export LIBERO_CONFIG_PATH=$CACHE_DIR/libero
