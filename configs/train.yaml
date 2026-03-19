@@ -15,7 +15,8 @@ env:
 
 # these are overriden when finetuning
 policy:
-  type: smolvla
+  type: advantage
+  fixed_advantage: true
   repo_id: reece-omahoney/smolvla-libero-bsz-256
   device: cuda
   chunk_size: 16

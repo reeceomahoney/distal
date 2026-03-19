@@ -21,5 +21,4 @@ def make_advantage_pre_post_processors(
     PolicyProcessorPipeline[PolicyAction, PolicyAction],
 ]:
     """Construct pre/post processors by delegating to SmolVLA's processor."""
-    smolvla_config = config.to_smolvla_config()
-    return make_smolvla_pre_post_processors(smolvla_config, dataset_stats=dataset_stats)
+    return make_smolvla_pre_post_processors(config, dataset_stats=dataset_stats)
