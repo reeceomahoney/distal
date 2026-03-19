@@ -36,6 +36,9 @@ setup: |
   init_states: /root/sky_workdir/.venv/lib/python3.12/site-packages/libero/libero/./init_files
   EOF
 
+  cd ~/sky_workdir
+  python /root/sky_workdir/.venv/lib/python3.12/site-packages/robosuite/scripts/setup_macros.py
+
 run: |
   cd ~/sky_workdir
   uv run mise run train
