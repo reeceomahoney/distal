@@ -6,6 +6,7 @@ eval_freq: 10_000
 
 dataset:
   repo_id: reece-omahoney/libero-10-success-adv
+  use_imagenet_stats: false
 
 env:
   type: libero

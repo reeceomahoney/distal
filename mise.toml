@@ -4,7 +4,7 @@ _.python.venv = ".venv"
 # Training
 
 [tasks.train]
-description = "Train policy"
+description = "Train base policy"
 run = "lerobot-train --config_path configs/train.yaml"
 
 [tasks.adv-train]

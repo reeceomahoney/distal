@@ -1,4 +1,4 @@
-job_name: smolvla-libero-bsz-256
+job_name: adv-libero-base
 num_workers: 16
 batch_size: 256
 steps: 100_000
@@ -17,7 +17,7 @@ env:
 policy:
   type: advantage
   fixed_advantage: true
-  repo_id: reece-omahoney/smolvla-libero-bsz-256
+  repo_id: reece-omahoney/adv-libero-base
   device: cuda
   chunk_size: 16
   n_action_steps: 8
