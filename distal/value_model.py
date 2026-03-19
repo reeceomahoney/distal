@@ -49,7 +49,7 @@ class ValueConfig(PreTrainedConfig):
     num_vlm_layers: int = 16
     self_attn_every_n_layers: int = 2
     freeze_vision_encoder: bool = True
-    train_expert_only: bool = False
+    train_expert_only: bool = True
 
     # Training presets
     optimizer_lr: float = 1e-4

@@ -37,7 +37,7 @@ class TrainValueConfig:
 
     # Training
     batch_size: int = 32
-    total_steps: int = 50_000
+    total_steps: int = 100_000
 
     # Logging & checkpointing
     log_interval: int = 100
@@ -277,7 +277,7 @@ def main(cfg: TrainValueConfig):
         else:
             returns = compute_returns(
                 steps_remaining_tensor[indices],
-                success,
+                success.to(device),
                 max_episode_length,
                 cfg.c_fail,
             )
