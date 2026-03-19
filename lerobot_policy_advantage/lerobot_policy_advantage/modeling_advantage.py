@@ -14,6 +14,7 @@ from lerobot.policies.smolvla.modeling_smolvla import (
     VLAFlowMatching,
     make_att_2d_masks,
 )
+from lerobot.utils.constants import OBS_LANGUAGE_ATTENTION_MASK, OBS_LANGUAGE_TOKENS
 from torch import Tensor
 from transformers import AutoTokenizer
 
@@ -217,8 +218,8 @@ class AdvantagePolicy(SmolVLAPolicy):
         """Training forward: resolve advantage tokens then delegate to model."""
         images, img_masks = self.prepare_images(batch)
         state = self.prepare_state(batch)
-        lang_tokens = batch["observation.language_tokens"]
-        lang_masks = batch["observation.language_attention_mask"]
+        lang_tokens = batch[f"{OBS_LANGUAGE_TOKENS}"]
+        lang_masks = batch[f"{OBS_LANGUAGE_ATTENTION_MASK}"]
         actions = self.prepare_action(batch)
         actions_is_pad = batch.get("action_is_pad")
 
@@ -228,7 +229,7 @@ class AdvantagePolicy(SmolVLAPolicy):
             bsize = actions.shape[0]
             indices = torch.ones(bsize, dtype=torch.long, device=device)
         else:
-            adv_labels = cast(list[str], batch["observation.language_advantage_label"])
+            adv_labels = cast(list[str], batch["observation.language.advantage_label"])
             indices = torch.tensor(
                 [1 if label == ADVANTAGE_POSITIVE else 0 for label in adv_labels],
                 dtype=torch.long,

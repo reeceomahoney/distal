@@ -2,7 +2,7 @@
 
 Loads a trained value model, computes n-step TD advantages, then binarizes
 per-sample advantages using per-task percentile thresholds. Adds an
-`observation.language_advantage_label` column with text strings
+`observation.language.advantage_label` column with text strings
 ("Advantage: positive" / "Advantage: negative") to the dataset's parquet files.
 
 N-step advantage: A(t) = sum_{k=0}^{N-1} r_{t+k} + V(t+N) - V(t)
@@ -369,7 +369,7 @@ def main(cfg: ComputeAdvantageLabelsConfig):
     )
 
     # Save by overwriting parquet files with the new column added
-    col_name = "observation.language_advantage_label"
+    col_name = "observation.language.advantage_label"
     data_dir = dataset.root / "data"
     print(f"Saving {col_name} to parquet files in {data_dir}...")
     offset = 0
