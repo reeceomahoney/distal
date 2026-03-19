@@ -38,4 +38,4 @@ setup: |
 
 run: |
   cd ~/sky_workdir
-  mise run train
+  uv run mise run train

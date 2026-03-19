@@ -9,4 +9,5 @@ env:
 eval:
   n_episodes: 5
   batch_size: 5
+  use_async_envs: true
 
