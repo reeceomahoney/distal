@@ -4,7 +4,7 @@ resources:
   cloud: vast
   accelerators: H100:1
   cpus: 16+
-  disk_size: 32
+  disk_size: 64
 
 envs:
   HF_TOKEN:
@@ -36,4 +36,4 @@ setup: |
 
 run: |
   cd ~/sky_workdir
-  mise run eval
+  mise run train
