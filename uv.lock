@@ -1333,7 +1333,7 @@ wheels = [
 [[package]]
 name = "lerobot"
 version = "0.5.1"
-source = { git = "https://github.com/reeceomahoney/lerobot?rev=fix%2Flibero-async-envs#11d3c76ccb0063f1684d3074b09c9f86412b530b" }
+source = { git = "https://github.com/reeceomahoney/lerobot?rev=fix%2Flibero-async-envs#c0ce2e90df401409fe3038ab6bf6584f887ca197" }
 dependencies = [
     { name = "accelerate" },
     { name = "av" },
