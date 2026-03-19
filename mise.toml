@@ -27,6 +27,10 @@ run = "lerobot-record --config_path configs/play.yaml --policy.path=reece-omahon
 
 # Cluster
 
+[tasks.sky]
+description = "Launch training on vast.ai via SkyPilot"
+run = "sky launch configs/sky.yaml --env HF_TOKEN --env WANDB_API_KEY"
+
 [tasks.container]
 description = "Build Singularity container and upload to cluster"
 run = """

@@ -1,0 +1,39 @@
+name: distal-train
+
+resources:
+  cloud: vast
+  accelerators: H100:1
+  cpus: 16+
+  disk_size: 32
+
+envs:
+  HF_TOKEN:
+  WANDB_API_KEY:
+  MUJOCO_GL: osmesa
+
+workdir: .
+
+setup: |
+  apt-get update && apt-get install -y libegl1 libosmesa6-dev
+
+  curl https://mise.run | sh
+  echo 'eval "$($HOME/.local/bin/mise activate bash)"' >> ~/.bashrc
+  export PATH="$HOME/.local/bin:$PATH"
+  eval "$(mise activate bash)"
+  cd ~/sky_workdir
+  mise trust
+
+  uv sync
+
+  mkdir ~/.libero
+  cat <<EOF > ~/.libero/config.yaml
+  assets: /root/sky_workdir/.venv/lib/python3.12/site-packages/libero/libero/./assets
+  bddl_files: /root/sky_workdir/.venv/lib/python3.12/site-packages/libero/libero/./bddl_files
+  benchmark_root: /root/sky_workdir/.venv/lib/python3.12/site-packages/libero/libero
+  datasets: /root/sky_workdir/.venv/lib/python3.12/site-packages/libero/libero/../datasets
+  init_states: /root/sky_workdir/.venv/lib/python3.12/site-packages/libero/libero/./init_files
+  EOF
+
+run: |
+  cd ~/sky_workdir
+  mise run eval
