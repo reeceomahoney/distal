@@ -126,21 +126,21 @@ def main(cfg: MahaStatsConfig):
     torch.backends.cudnn.benchmark = True
     torch.backends.cuda.matmul.allow_tf32 = True
 
+    # Load dataset
+    dataset = LeRobotDataset(repo_id=cfg.dataset_repo_id)
+
     # Load policy
     policy_cfg = PreTrainedConfig.from_pretrained(cfg.policy_path)
     policy_cfg.pretrained_path = Path(cfg.policy_path)
     policy_cfg.device = str(device)
 
-    policy = make_policy(cfg=policy_cfg)
+    policy = make_policy(cfg=policy_cfg, ds_meta=dataset.meta)
     assert isinstance(policy, (PI05Policy, SmolVLAPolicy))
     policy.eval()
 
     preprocessor, _ = make_pre_post_processors(
         policy_cfg=policy_cfg, pretrained_path=str(policy_cfg.pretrained_path)
     )
-
-    # Load dataset
-    dataset = LeRobotDataset(repo_id=cfg.dataset_repo_id)
 
     # Compute stats
     mean, cov_inv = fit_gaussian_from_dataset(
