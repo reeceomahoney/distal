@@ -13,7 +13,6 @@ window extends past the episode boundary.
 import json
 from collections import Counter
 from dataclasses import dataclass
-from pathlib import Path
 
 import draccus
 import numpy as np
@@ -21,8 +20,7 @@ import pandas as pd
 import torch
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
-from lerobot.envs.configs import LiberoEnv as LiberoEnvConfig
-from lerobot.policies.factory import make_policy, make_pre_post_processors
+from lerobot.policies.factory import make_pre_post_processors
 from torch.utils.data import DataLoader
 
 from distal.value_model import ValueFunction
@@ -38,7 +36,7 @@ class ComputeAdvantageLabelsConfig:
     dataset_repo_id: str = "reece-omahoney/libero-10"
     c_fail: float = 1000.0
     reward_type: str = "maha_distance"  # "steps_remaining" or "maha_distance"
-    load_stats: str = "outputs/eval_dist/latest/gauss_stats.npz"
+    stats_path: str = "outputs/maha/stats.npz"
     device: str = "cuda"
     n_step: int = 10
     advantage_percentile: float = 0.7
@@ -295,27 +293,29 @@ def main(cfg: ComputeAdvantageLabelsConfig):
     # Compute n-step advantages
     print(f"Computing {cfg.n_step}-step advantages...")
     if cfg.reward_type == "maha_distance":
+        from pathlib import Path
+
+        from lerobot.policies.factory import make_policy
         from lerobot.policies.pi05.modeling_pi05 import PI05Policy
         from lerobot.policies.smolvla.modeling_smolvla import SmolVLAPolicy
 
-        from distal.mahalanobis import compute_maha_distances
+        from distal.compute_maha_stats import compute_maha_distances
+
+        data = np.load(cfg.stats_path)
+        gauss_mean = data["mean"]
+        gauss_cov_inv = data["cov_inv"]
+        print(f"Loaded Gaussian stats from {cfg.stats_path}, dim={gauss_mean.shape[0]}")
 
         print("Loading policy for Mahalanobis distance computation...")
-        env_cfg = LiberoEnvConfig("libero_10", fps=10)
         policy_cfg = PreTrainedConfig.from_pretrained(cfg.pretrained_path)
         policy_cfg.pretrained_path = Path(cfg.pretrained_path)
         policy_cfg.device = cfg.device
-        policy = make_policy(cfg=policy_cfg, env_cfg=env_cfg)
+        policy = make_policy(cfg=policy_cfg)
         assert isinstance(policy, (PI05Policy, SmolVLAPolicy))
         policy.eval()
         policy_preprocessor, _ = make_pre_post_processors(
             policy_cfg=policy_cfg, pretrained_path=str(policy_cfg.pretrained_path)
         )
-
-        data = np.load(cfg.load_stats)
-        gauss_mean = data["mean"]
-        gauss_cov_inv = data["cov_inv"]
-        print(f"Loaded Gaussian stats from {cfg.load_stats}, dim={gauss_mean.shape[0]}")
 
         maha_distance = compute_maha_distances(
             policy,

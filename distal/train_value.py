@@ -14,23 +14,25 @@ from pathlib import Path
 import draccus
 import numpy as np
 import torch
-from lerobot.configs.policies import PreTrainedConfig
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.datasets.utils import cycle
 from lerobot.optim.schedulers import CosineDecayWithWarmupSchedulerConfig
-from lerobot.policies.factory import make_pre_post_processors
 from torch.utils.data import DataLoader
 
 from distal.value_model import ValueConfig, ValueFunction
+from lerobot_policy_advantage.configuration_advantage import AdvantageConfig
+from lerobot_policy_advantage.processor_advantage import (
+    make_advantage_pre_post_processors,
+)
 
 
 @dataclass
 class TrainValueConfig:
     dataset_repo_id: str = "reece-omahoney/libero-10"
-    base_policy: str = "reece-omahoney/adv-libero-base"
     c_fail: float = 1000.0
     reward_type: str = "steps_remaining"  # "steps_remaining" or "maha_distance"
-    load_stats: str = "outputs/eval_dist/latest/gauss_stats.npz"
+    stats_path: str = "outputs/maha/stats.npz"
+    base_policy: str = "reece-omahoney/adv-libero-base"
 
     value: ValueConfig = field(default_factory=ValueConfig)
     value_repo_id: str = "reece-omahoney/value-success-expert"
@@ -189,10 +191,7 @@ def main(cfg: TrainValueConfig):
     else:
         model = ValueFunction(cfg.value)
     model = model.to(device)
-    policy_cfg = PreTrainedConfig.from_pretrained(cfg.base_policy)
-    preprocessor, _ = make_pre_post_processors(
-        policy_cfg, pretrained_path=cfg.base_policy
-    )
+    preprocessor, _ = make_advantage_pre_post_processors(AdvantageConfig())
 
     # ── Optimizer & scheduler ──
     optimizer_cfg = cfg.value.get_optimizer_preset()
@@ -213,31 +212,27 @@ def main(cfg: TrainValueConfig):
     maha_norm = None
     maha_returns_tensor = None
     if cfg.reward_type == "maha_distance":
-        from lerobot.envs.configs import LiberoEnv as LiberoEnvConfig
+        from lerobot.configs.policies import PreTrainedConfig
         from lerobot.policies.factory import make_policy
         from lerobot.policies.pi05.modeling_pi05 import PI05Policy
         from lerobot.policies.smolvla.modeling_smolvla import SmolVLAPolicy
 
-        from distal.mahalanobis import compute_maha_distances
+        from distal.compute_maha_stats import compute_maha_distances
+
+        data = np.load(cfg.stats_path)
+        gauss_mean = data["mean"]
+        gauss_cov_inv = data["cov_inv"]
+        print(f"Loaded Gaussian stats from {cfg.stats_path}, dim={gauss_mean.shape[0]}")
 
         print("Loading policy for Mahalanobis distance computation...")
-        env_cfg = LiberoEnvConfig("libero_10", fps=10)
         policy_cfg = PreTrainedConfig.from_pretrained(cfg.base_policy)
         policy_cfg.pretrained_path = Path(cfg.base_policy)
         policy_cfg.device = str(device)
-        maha_policy = make_policy(cfg=policy_cfg, env_cfg=env_cfg)
+        maha_policy = make_policy(cfg=policy_cfg)
         assert isinstance(maha_policy, (PI05Policy, SmolVLAPolicy))
         maha_policy.eval()
-        policy_preprocessor, _ = make_pre_post_processors(
-            policy_cfg=policy_cfg, pretrained_path=str(policy_cfg.pretrained_path)
-        )
+        policy_preprocessor, _ = make_advantage_pre_post_processors(AdvantageConfig())
 
-        data = np.load(cfg.load_stats)
-        gauss_mean = data["mean"]
-        gauss_cov_inv = data["cov_inv"]
-        print(f"Loaded Gaussian stats from {cfg.load_stats}, dim={gauss_mean.shape[0]}")
-
-        print("Pre-computing Mahalanobis distance returns...")
         maha_arr = compute_maha_distances(
             maha_policy,
             policy_preprocessor,

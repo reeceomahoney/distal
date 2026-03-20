@@ -1,13 +1,20 @@
-"""Mahalanobis distance computation and Gaussian fitting from dataset embeddings."""
+"""Compute Mahalanobis statistics (mean, cov_inv) from a dataset and save to disk."""
 
+from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Union
 
+import draccus
 import numpy as np
 import torch
+from lerobot.configs.policies import PreTrainedConfig
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
+from lerobot.policies.factory import make_policy, make_pre_post_processors
 from lerobot.policies.pi05.modeling_pi05 import PI05Policy
 from lerobot.policies.smolvla.modeling_smolvla import SmolVLAPolicy
-from lerobot.utils.utils import inside_slurm
+from lerobot.utils.device_utils import get_safe_torch_device
+from lerobot.utils.import_utils import register_third_party_plugins
+from lerobot.utils.utils import init_logging, inside_slurm
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
@@ -98,3 +105,58 @@ def fit_gaussian_from_dataset(
     cov_inv: np.ndarray = np.linalg.inv(np.cov(embeddings.T))
 
     return mean, cov_inv
+
+
+@dataclass
+class MahaStatsConfig:
+    policy_path: str = "reece-omahoney/adv-libero-base"
+    dataset_repo_id: str = "lerobot/libero"
+    output_path: str = "outputs/maha/stats.npz"
+    device: str = "cuda"
+    batch_size: int = 32
+    num_workers: int = 4
+
+
+@draccus.wrap()
+def main(cfg: MahaStatsConfig):
+    init_logging()
+    register_third_party_plugins()
+
+    device = get_safe_torch_device(cfg.device, log=True)
+    torch.backends.cudnn.benchmark = True
+    torch.backends.cuda.matmul.allow_tf32 = True
+
+    # Load policy
+    policy_cfg = PreTrainedConfig.from_pretrained(cfg.policy_path)
+    policy_cfg.pretrained_path = Path(cfg.policy_path)
+    policy_cfg.device = str(device)
+
+    policy = make_policy(cfg=policy_cfg)
+    assert isinstance(policy, (PI05Policy, SmolVLAPolicy))
+    policy.eval()
+
+    preprocessor, _ = make_pre_post_processors(
+        policy_cfg=policy_cfg, pretrained_path=str(policy_cfg.pretrained_path)
+    )
+
+    # Load dataset
+    dataset = LeRobotDataset(repo_id=cfg.dataset_repo_id)
+
+    # Compute stats
+    mean, cov_inv = fit_gaussian_from_dataset(
+        policy=policy,
+        preprocessor=preprocessor,
+        dataset=dataset,
+        batch_size=cfg.batch_size,
+        num_workers=cfg.num_workers,
+    )
+
+    # Save
+    output_path = Path(cfg.output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    np.savez(output_path, mean=mean, cov_inv=cov_inv)
+    print(f"Saved Mahalanobis stats to {output_path}")
+
+
+if __name__ == "__main__":
+    main()
