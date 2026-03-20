@@ -9,7 +9,7 @@ run = "lerobot-train --config_path configs/train.yaml"
 
 [tasks.adv-train]
 description = "Train advantage policy"
-run = "lerobot-train --config_path configs/advantage_train.yaml --policy.path={{arg(i=0, name='base policy')}}"
+run = "lerobot-train --config_path configs/advantage_train.yaml --policy.path={{arg(i=0, name='base_policy')}}"
 
 [tasks.eval]
 description = "Evaluate policy in LIBERO sim"
@@ -30,6 +30,10 @@ run = "lerobot-record --config_path configs/play.yaml --policy.path=reece-omahon
 [tasks.sky]
 description = "Launch training on vast.ai via SkyPilot"
 run = "sky launch configs/sky.yaml --env HF_TOKEN --env WANDB_API_KEY"
+
+[tasks.sky-exec]
+description = "Send command to running SkyPilot cluster"
+run = "sky exec {{arg(i=0, name='cluster_id')}} configs/sky.yaml --env HF_TOKEN --env WANDB_API_KEY"
 
 [tasks.container]
 description = "Build Singularity container and upload to cluster"
