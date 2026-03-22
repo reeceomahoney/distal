@@ -167,6 +167,7 @@ def main(cfg: MahaStatsConfig):
         path_or_fileobj=str(output_path),
         path_in_repo="stats.safetensors",
         repo_id=cfg.hub_repo_id,
+        repo_type="dataset",
     )
     print(f"Pushed stats to https://huggingface.co/{cfg.hub_repo_id}")
 
