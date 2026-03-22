@@ -31,12 +31,12 @@ from lerobot_policy_advantage.processor_advantage import (
 class TrainValueConfig:
     dataset_repo_id: str = "reece-omahoney/libero-10"
     c_fail: float = 1000.0
-    reward_type: str = "steps_remaining"  # "steps_remaining" or "maha_distance"
+    reward_type: str = "maha_distance"  # "steps_remaining" or "maha_distance"
     stats_repo_id: str = "reece-omahoney/maha-stats"
     base_policy: str = "reece-omahoney/adv-libero-base"
 
     value: ValueConfig = field(default_factory=ValueConfig)
-    value_repo_id: str = "reece-omahoney/value-success-expert"
+    value_repo_id: str = "reece-omahoney/value-maha-expert"
     push_to_hub: bool = False
 
     # Training
@@ -217,11 +217,12 @@ def main(cfg: TrainValueConfig):
         from lerobot.policies.factory import make_policy
         from lerobot.policies.pi05.modeling_pi05 import PI05Policy
         from lerobot.policies.smolvla.modeling_smolvla import SmolVLAPolicy
+        from safetensors.numpy import load_file
 
         from distal.compute_maha_stats import compute_maha_distances
 
-        stats_file = hf_hub_download(cfg.stats_repo_id, "stats.npz")
-        data = np.load(stats_file)
+        stats_file = hf_hub_download(cfg.stats_repo_id, "stats.safetensors")
+        data = load_file(stats_file)
         gauss_mean = data["mean"]
         gauss_cov_inv = data["cov_inv"]
         print(

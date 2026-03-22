@@ -16,6 +16,7 @@ from lerobot.policies.smolvla.modeling_smolvla import SmolVLAPolicy
 from lerobot.utils.device_utils import get_safe_torch_device
 from lerobot.utils.import_utils import register_third_party_plugins
 from lerobot.utils.utils import init_logging, inside_slurm
+from safetensors.numpy import save_file
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
@@ -113,7 +114,7 @@ class MahaStatsConfig:
     policy_path: str = "reece-omahoney/adv-libero-base"
     dataset_repo_id: str = "lerobot/libero"
     hub_repo_id: str = "reece-omahoney/maha-stats"
-    output_path: str = "outputs/maha/stats.npz"
+    output_path: str = "outputs/maha/stats.safetensors"
     device: str = "cuda"
     batch_size: int = 32
     num_workers: int = 4
@@ -156,7 +157,7 @@ def main(cfg: MahaStatsConfig):
     # Save locally
     output_path = Path(cfg.output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    np.savez(output_path, mean=mean, cov_inv=cov_inv)
+    save_file({"mean": mean, "cov_inv": cov_inv}, str(output_path))
     print(f"Saved Mahalanobis stats to {output_path}")
 
     # Push to Hugging Face Hub
@@ -164,7 +165,7 @@ def main(cfg: MahaStatsConfig):
     api.create_repo(cfg.hub_repo_id, repo_type="dataset", exist_ok=True)
     api.upload_file(
         path_or_fileobj=str(output_path),
-        path_in_repo="stats.npz",
+        path_in_repo="stats.safetensors",
         repo_id=cfg.hub_repo_id,
     )
     print(f"Pushed stats to https://huggingface.co/{cfg.hub_repo_id}")
