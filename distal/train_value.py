@@ -235,7 +235,7 @@ def main(cfg: TrainValueConfig):
         policy_cfg = PreTrainedConfig.from_pretrained(cfg.base_policy)
         policy_cfg.pretrained_path = Path(cfg.base_policy)
         policy_cfg.device = str(device)
-        maha_policy = make_policy(cfg=policy_cfg)
+        maha_policy = make_policy(cfg=policy_cfg, ds_meta=dataset.meta)
         assert isinstance(maha_policy, (PI05Policy, SmolVLAPolicy))
         maha_policy.eval()
         policy_preprocessor, _ = make_advantage_pre_post_processors(AdvantageConfig())
