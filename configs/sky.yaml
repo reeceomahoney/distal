@@ -54,4 +54,4 @@ setup: |
 
 run: |
   cd ~/sky_workdir
-  uv run mise run adv-train reece-omahoney/adv-libero-base
+  uv run mise run adv-train

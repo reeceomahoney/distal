@@ -11,7 +11,7 @@ run = "lerobot-train --config_path configs/train.yaml"
 description = "Train advantage policy"
 run = """
 lerobot-train --config_path configs/advantage_train.yaml \
-  --policy.path={{arg(i=0, name='base_policy')}} \
+  --policy.path=reece-omahoney/adv-libero-base \
   --policy.repo_id=reece-omahoney/adv-libero-success-expert \
   --policy.fixed_advantage=false \
   --policy.advantage_dropout=0.3
