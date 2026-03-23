@@ -1,9 +1,9 @@
-"""Pre-compute text advantage labels and add them to a LeRobot dataset.
+"""Pre-compute binary advantage labels and add them to a LeRobot dataset.
 
 Loads a trained value model, computes n-step TD advantages, then binarizes
 per-sample advantages using per-task percentile thresholds. Adds an
-`observation.language.advantage_label` column with text strings
-("Advantage: positive" / "Advantage: negative") to the dataset's parquet files.
+`observation.language.advantage_label` column with integer labels (0 or 1)
+to the dataset's parquet files.
 
 N-step advantage: A(t) = sum_{k=0}^{N-1} r_{t+k} + V(t+N) - V(t)
 where r = -1/max_ep_len per step. Falls back to MC return when the n-step
