@@ -18,18 +18,7 @@ envs:
 workdir: .
 
 setup: |
-  set -e
-
-  # Fix EGL libs
-  V=$(nvidia-smi --query-gpu=driver_version --format=csv,noheader | head -1)
   apt-get update && apt-get install -y libegl1 libgl1 libglvnd0 libopengl0
-  wget -q "https://us.download.nvidia.com/tesla/${V}/NVIDIA-Linux-x86_64-${V}.run" -O /tmp/nvidia.run
-  chmod +x /tmp/nvidia.run && /tmp/nvidia.run --extract-only --target /tmp/nvidia-driver
-  cp /tmp/nvidia-driver/{libEGL_nvidia,libnvidia-eglcore,libnvidia-glcore,libnvidia-glsi,libnvidia-tls}.so.${V} \
-    /usr/lib/x86_64-linux-gnu/
-  mkdir -p /usr/share/glvnd/egl_vendor.d
-  echo '{"file_format_version":"1.0.0","ICD":{"library_path":"libEGL_nvidia.so.0"}}' > /usr/share/glvnd/egl_vendor.d/10_nvidia.json
-  ldconfig && rm -rf /tmp/nvidia.run /tmp/nvidia-driver
 
   curl https://mise.run | sh
   echo 'eval "$($HOME/.local/bin/mise activate bash)"' >> ~/.bashrc
