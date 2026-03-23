@@ -23,6 +23,7 @@ from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.policies.factory import make_pre_post_processors
 from torch.utils.data import DataLoader
 
+import lerobot_policy_advantage as lerobot_policy_advantage
 from distal.value_model import ValueFunction
 
 
@@ -269,20 +270,10 @@ def main(cfg: ComputeAdvantageLabelsConfig):
     success = np.array([s.item() for s in dataset.hf_dataset["success"]])
     episode_index = episode_index_all
 
-    # Collect task strings (need a sequential pass through the dataset)
-    # TODO: make this efficient
-    print("Collecting task strings...")
-    tasks: list[str] = []
-    task_loader = DataLoader(
-        dataset,
-        batch_size=cfg.batch_size,
-        shuffle=False,
-        num_workers=cfg.num_workers,
-        pin_memory=False,
-        drop_last=False,
-    )
-    for batch in task_loader:
-        tasks.extend(batch["task"])
+    # Get per-frame task strings
+    task_index = np.array([s.item() for s in dataset.hf_dataset["task_index"]])
+    task_map = {v: k for k, v in dataset.meta.tasks["task_index"].items()}
+    tasks = [task_map[i] for i in task_index]
 
     # Compute n-step advantages
     print(f"Computing {cfg.n_step}-step advantages...")
@@ -311,7 +302,7 @@ def main(cfg: ComputeAdvantageLabelsConfig):
         policy_cfg = PreTrainedConfig.from_pretrained(cfg.pretrained_path)
         policy_cfg.pretrained_path = Path(cfg.pretrained_path)
         policy_cfg.device = cfg.device
-        policy = make_policy(cfg=policy_cfg)
+        policy = make_policy(cfg=policy_cfg, ds_meta=dataset.meta)
         assert isinstance(policy, (PI05Policy, SmolVLAPolicy))
         policy.eval()
         policy_preprocessor, _ = make_pre_post_processors(
