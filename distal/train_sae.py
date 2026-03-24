@@ -50,6 +50,7 @@ class TrainSAEConfig:
     use_amp: bool = True
     wandb_project: str | None = "distal-sae"
     push_to_hub: bool = True
+    token_cache_path: str = "outputs/sae/token_cache.pt"
 
 
 def extract_all_tokens(
@@ -121,26 +122,38 @@ def main(cfg: TrainSAEConfig):
             dir=str(output_dir),
         )
 
-    # Load policy + dataset
-    dataset = LeRobotDataset(repo_id=cfg.dataset_repo_id)
-    print(f"Dataset: {dataset.num_episodes} episodes, {dataset.num_frames} frames")
+    # Extract all token activations (or load from cache)
+    cache_path = Path(cfg.token_cache_path)
+    if cache_path.exists():
+        print(f"Loading cached tokens from {cache_path}")
+        all_tokens = torch.load(cache_path, weights_only=True)
+    else:
+        dataset = LeRobotDataset(repo_id=cfg.dataset_repo_id)
+        print(f"Dataset: {dataset.num_episodes} episodes, {dataset.num_frames} frames")
 
-    policy_cfg = PreTrainedConfig.from_pretrained(cfg.policy_path)
-    policy_cfg.pretrained_path = Path(cfg.policy_path)
-    policy_cfg.device = str(device)
+        policy_cfg = PreTrainedConfig.from_pretrained(cfg.policy_path)
+        policy_cfg.pretrained_path = Path(cfg.policy_path)
+        policy_cfg.device = str(device)
 
-    policy = make_policy(cfg=policy_cfg, ds_meta=dataset.meta)
-    assert isinstance(policy, (PI05Policy, SmolVLAPolicy))
-    policy.eval()
+        policy = make_policy(cfg=policy_cfg, ds_meta=dataset.meta)
+        assert isinstance(policy, (PI05Policy, SmolVLAPolicy))
+        policy.eval()
 
-    preprocessor, _ = make_pre_post_processors(
-        policy_cfg=policy_cfg, pretrained_path=str(policy_cfg.pretrained_path)
-    )
+        preprocessor, _ = make_pre_post_processors(
+            policy_cfg=policy_cfg, pretrained_path=str(policy_cfg.pretrained_path)
+        )
 
-    # Extract all token activations
-    all_tokens = extract_all_tokens(
-        policy, preprocessor, dataset, cfg.embedding_batch_size, cfg.num_workers, device
-    )
+        all_tokens = extract_all_tokens(
+            policy,
+            preprocessor,
+            dataset,
+            cfg.embedding_batch_size,
+            cfg.num_workers,
+            device,
+        )
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        torch.save(all_tokens, cache_path)
+        print(f"Saved token cache to {cache_path}")
     n_samples, n_tokens, token_dim = all_tokens.shape
     print(f"Extracted {n_samples} samples, {n_tokens} tokens, dim={token_dim}")
 
