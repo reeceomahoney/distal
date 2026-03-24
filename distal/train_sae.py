@@ -81,8 +81,9 @@ def extract_all_tokens(
             for k, v in batch.items()
         }
         batch = preprocessor(batch)
-        tokens = embed_prefix_tokens(policy, batch)
-        all_tokens.append(tokens.cpu())
+        with torch.amp.autocast("cuda", dtype=torch.bfloat16):
+            tokens = embed_prefix_tokens(policy, batch)
+        all_tokens.append(tokens.float().cpu())
 
     return torch.cat(all_tokens, dim=0)
 
