@@ -622,7 +622,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "lerobot", extras = ["smolvla", "libero", "pi"], git = "https://github.com/reeceomahoney/lerobot?rev=feat%2Flibero-process-isolation" },
+    { name = "lerobot", extras = ["smolvla", "libero", "pi"], git = "https://github.com/reeceomahoney/lerobot?rev=feat%2Fcombined-fixes" },
     { name = "lerobot-policy-advantage", editable = "lerobot_policy_advantage" },
     { name = "matplotlib", specifier = ">=3.7.0" },
     { name = "opencv-contrib-python", specifier = ">=4.12.0.88" },
@@ -1362,7 +1362,7 @@ wheels = [
 [[package]]
 name = "lerobot"
 version = "0.5.1"
-source = { git = "https://github.com/reeceomahoney/lerobot?rev=feat%2Flibero-process-isolation#2f2f045e8779ecbb8f1bdedcc243db1a181a6b93" }
+source = { git = "https://github.com/reeceomahoney/lerobot?rev=feat%2Fcombined-fixes#fe0f56154e17a5166d47d04bf9cc09f94607af2b" }
 dependencies = [
     { name = "accelerate" },
     { name = "av" },
@@ -1419,7 +1419,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "distal" },
-    { name = "lerobot", extras = ["smolvla"], git = "https://github.com/reeceomahoney/lerobot?rev=feat%2Flibero-process-isolation" },
+    { name = "lerobot", extras = ["smolvla"], git = "https://github.com/reeceomahoney/lerobot?rev=feat%2Fcombined-fixes" },
 ]
 
 [[package]]
