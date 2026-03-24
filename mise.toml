@@ -33,6 +33,16 @@ run = "lerobot-record --config_path configs/play.yaml --policy.path=reece-omahon
 
 # Cluster
 
+[tasks.train-sae]
+description = "Train sparse autoencoder for OOD detection"
+run = "uv run python -m distal.train_sae"
+
+[tasks.compare-ood]
+description = "Compare SAE vs Mahalanobis OOD detection"
+run = "uv run python -m distal.compare_ood"
+
+# Cluster
+
 [tasks.sky]
 description = "Launch training on vast.ai via SkyPilot"
 run = "sky launch configs/sky.yaml -y --env HF_TOKEN --env WANDB_API_KEY"
