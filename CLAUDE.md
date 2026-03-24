@@ -47,6 +47,9 @@ configs which are self-documenting.
 
 No formal test suite exists — testing is done manually via mise tasks.
 
+**Never use OSMesa for rendering.** Always use EGL (`MUJOCO_GL=egl`). OSMesa is
+too slow for policy evaluation.
+
 slurm_tools has its own git repo, use this to push changes
 
 ## Architecture
