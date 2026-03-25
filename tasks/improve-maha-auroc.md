@@ -37,21 +37,9 @@ AUROC (max Maha -> failure): 0.7579
 
 ## Goal
 
-Improve the AUROC by modifying the stats fitting (`compute_maha_stats.py`)
-and/or the evaluation script (`maha_auroc.py`). Possible axes to explore:
-
-- **Covariance estimation**: the current approach uses a naive
-  `np.linalg.inv(np.cov(...))` which may be ill-conditioned at high embedding
-  dimensions.
-- **Per-task normalization**: the dataset has 10 different LIBERO tasks with
-  different visual contexts. Cross-task variance may wash out within-task OOD
-  signal. Task IDs are available via `dataset.hf_dataset["task_index"]`.
-- **Episode aggregation**: currently uses max distance per episode. Other
-  aggregations (top-k% mean, fraction of frames above a threshold) may better
-  capture sustained OOD behavior vs single-frame spikes.
-
-Report AUROC after each change so we can see what helped. Try multiple
-approaches and report a comparison.
+Improve the AUROC. You may modify `distal/compute_maha_stats.py` and/or
+`distal/maha_auroc.py`. Read the existing code, understand the pipeline, and
+decide what to try. Report AUROC after each change so we can track what helped.
 
 ## How to run
 
@@ -72,3 +60,10 @@ approaches and report a comparison.
 - Do not modify `distal/embedding.py` -- the embedding function is correct.
 - After modifying `compute_maha_stats.py`, you must re-run it to regenerate
   stats before re-evaluating AUROC. This requires a GPU.
+
+## Approaches tried
+
+Record each approach here with its AUROC result so we don't repeat work.
+
+| Approach | AUROC | Notes | | -------- | ----- | ----- | | Baseline (max per
+episode, naive cov) | 0.7579 | Current state |
