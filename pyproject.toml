@@ -18,6 +18,7 @@ dependencies = [
   "vastai>=0.2.8",
   "skypilot[vast, kubernetes, runpod]>=0.8",
   "runpod>=1.8.2",
+  "pyroute2>=0.9.5",
 ]
 
 [dependency-groups]
