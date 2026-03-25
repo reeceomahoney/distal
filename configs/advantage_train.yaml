@@ -1,8 +1,9 @@
 job_name: adv-libero-success-expert
 num_workers: 16
 batch_size: 256
-steps: 100_000
-eval_freq: 10_000
+steps: 20_000
+eval_freq: 5000
+save_freq: 5000
 
 dataset:
   repo_id: reece-omahoney/libero-10-adv-success-expert
@@ -12,7 +13,7 @@ env:
   type: libero
   task: libero_10
   fps: 10
-  process_isolation: true
+  process_isolation: false
 
 eval:
   n_episodes: 5
