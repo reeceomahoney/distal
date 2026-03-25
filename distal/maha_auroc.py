@@ -55,6 +55,7 @@ def main(cfg: MahaAurocConfig):
         repo_id=cfg.maha_stats_repo_id,
         filename="stats.safetensors",
         repo_type="dataset",
+        force_download=True,
     )
     stats = load_file(stats_path)
     gauss_mean = stats["mean"]
