@@ -31,8 +31,7 @@ class RolloutValueVizConfig:
     value_checkpoint: str = "reece-omahoney/value-success-expert"
     suite_name: str = "libero_10"
     task_ids: list[int] | None = None
-    n_episodes: int = 1
-    n_envs: int = 1
+    n_envs: int = 5
     save: bool = False
     output_dir: str = "outputs/rollout_value_viz"
 
@@ -52,14 +51,16 @@ def rollout_with_values(
     env_postprocessor,
     task_text: str,
     seed: int,
-) -> dict:
-    """Run a single episode, collecting observations and value estimates."""
+) -> list[dict]:
+    """Run episodes across all envs, collecting observations and value estimates."""
+    n_envs = vec_env.num_envs
     max_steps = vec_env.call("_max_episode_steps")[0]
-    observation, _ = vec_env.reset(seed=[seed])
+    observation, _ = vec_env.reset(seed=[seed + i for i in range(n_envs)])
     policy.reset()
 
-    frames = []
-    success = False
+    frames = [[] for _ in range(n_envs)]
+    successes = [False] * n_envs
+    dones = [False] * n_envs
 
     disable_bar = inside_slurm()
     for step in tqdm(
@@ -74,21 +75,22 @@ def rollout_with_values(
         with torch.inference_mode():
             action = policy.select_action(observation)
 
-            # Get value estimate from current observation
-            obs_i = {
-                k: v[0] if isinstance(v, torch.Tensor) else v
-                for k, v in raw_obs.items()
-            }
-            value_batch = value_preprocessor(obs_i)
-            value = value_model.predict_value(value_batch).item()
+            # Get value estimates for all envs
+            value_batch = value_preprocessor(raw_obs)
+            values = value_model.predict_value(value_batch)
 
-        # Collect frame data
-        frame = {"step": step, "value": value}
-        for key in sorted(k for k in raw_obs if k.startswith("observation.images.")):
-            val = raw_obs[key]
-            if isinstance(val, torch.Tensor):
-                frame[key] = to_hwc_uint8(val[0])
-        frames.append(frame)
+        # Collect frame data per env
+        for ei in range(n_envs):
+            if dones[ei]:
+                continue
+            frame = {"step": step, "value": values[ei].item()}
+            for key in sorted(
+                k for k in raw_obs if k.startswith("observation.images.")
+            ):
+                val = raw_obs[key]
+                if isinstance(val, torch.Tensor):
+                    frame[key] = to_hwc_uint8(val[ei])
+            frames[ei].append(frame)
 
         # Step environment
         action = postprocessor(action)
@@ -101,16 +103,28 @@ def rollout_with_values(
         if "final_info" in info:
             is_success = info["final_info"].get("is_success")
             if is_success is not None:
-                val = is_success[0] if hasattr(is_success, "__len__") else is_success
-                if hasattr(val, "item"):
-                    val = val.item()
-                if val:
-                    success = True
+                for ei in range(n_envs):
+                    if dones[ei]:
+                        continue
+                    val = (
+                        is_success[ei] if hasattr(is_success, "__len__") else is_success
+                    )
+                    if hasattr(val, "item"):
+                        val = val.item()
+                    if val:
+                        successes[ei] = True
 
-        if bool(terminated[0]) or bool(truncated[0]):
+        for ei in range(n_envs):
+            if bool(terminated[ei]) or bool(truncated[ei]):
+                dones[ei] = True
+
+        if all(dones):
             break
 
-    return {"frames": frames, "success": success, "task": task_text}
+    return [
+        {"frames": frames[ei], "success": successes[ei], "task": task_text}
+        for ei in range(n_envs)
+    ]
 
 
 def log_episode_to_rerun(result: dict, episode_idx: int) -> None:
@@ -168,20 +182,19 @@ def main(cfg: RolloutValueVizConfig):
         task_text = vec_env.call("task_description")[0]  # type: ignore[attr-defined]
         print(f"\n=== Task {task_id}: {task_text} ===")
 
-        for ep in range(cfg.n_episodes):
-            result = rollout_with_values(
-                policy=policy,
-                value_model=value_model,
-                value_preprocessor=value_preprocessor,
-                vec_env=vec_env,
-                preprocessor=preprocessor,
-                postprocessor=postprocessor,
-                env_preprocessor=env_preprocessor,
-                env_postprocessor=env_postprocessor,
-                task_text=task_text,
-                seed=ep,
-            )
-            all_results.append(result)
+        results = rollout_with_values(
+            policy=policy,
+            value_model=value_model,
+            value_preprocessor=value_preprocessor,
+            vec_env=vec_env,
+            preprocessor=preprocessor,
+            postprocessor=postprocessor,
+            env_preprocessor=env_preprocessor,
+            env_postprocessor=env_postprocessor,
+            task_text=task_text,
+            seed=0,
+        )
+        all_results.extend(results)
 
         vec_env.close()
 
