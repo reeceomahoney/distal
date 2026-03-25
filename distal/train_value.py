@@ -18,13 +18,13 @@ import torch
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.datasets.utils import cycle
 from lerobot.optim.schedulers import CosineDecayWithWarmupSchedulerConfig
-from torch.utils.data import DataLoader
-
-from distal.value_model import ValueConfig, ValueFunction
 from lerobot_policy_advantage.configuration_advantage import AdvantageConfig
 from lerobot_policy_advantage.processor_advantage import (
     make_advantage_pre_post_processors,
 )
+from torch.utils.data import DataLoader
+
+from distal.value_model import ValueConfig, ValueFunction
 
 
 @dataclass

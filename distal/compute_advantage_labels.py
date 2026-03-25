@@ -347,9 +347,9 @@ def main(cfg: ComputeAdvantageLabelsConfig):
     print("Binarizing advantage labels...")
     labels = binarize_advantages(advantages, tasks, thresholds)
 
-    assert (
-        len(labels) == dataset.num_frames
-    ), f"Expected {dataset.num_frames} labels, got {len(labels)}"
+    assert len(labels) == dataset.num_frames, (
+        f"Expected {dataset.num_frames} labels, got {len(labels)}"
+    )
 
     num_positive = sum(labels)
     pct_positive = num_positive / len(labels) * 100
@@ -368,9 +368,9 @@ def main(cfg: ComputeAdvantageLabelsConfig):
         df[col_name] = labels[offset : offset + n]
         offset += n
         df.to_parquet(pq_path, compression="snappy", index=False)
-    assert offset == len(
-        labels
-    ), f"Parquet files had {offset} rows, expected {len(labels)}"
+    assert offset == len(labels), (
+        f"Parquet files had {offset} rows, expected {len(labels)}"
+    )
 
     # Update info.json to register the new feature
     info_path = dataset.root / "meta" / "info.json"
