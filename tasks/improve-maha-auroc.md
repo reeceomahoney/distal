@@ -65,5 +65,4 @@ decide what to try. Report AUROC after each change so we can track what helped.
 
 Record each approach here with its AUROC result so we don't repeat work.
 
-| Approach | AUROC | Notes | | -------- | ----- | ----- | | Baseline (max per
-episode, naive cov) | 0.7579 | Current state |
+- **Baseline** (max per episode, naive cov): AUROC = 0.7579
