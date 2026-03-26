@@ -6,13 +6,14 @@ from pathlib import Path
 
 from lerobot.configs.policies import PreTrainedConfig
 
+from distal.value_model import ValueConfig, ValueFunction  # noqa: F401
+
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
 )
 
 
 def push_value(checkpoint_dir: Path, repo_id: str, private: bool):
-    from distal.value_model import ValueConfig, ValueFunction  # noqa: F401
 
     model = ValueFunction.from_pretrained(str(checkpoint_dir))
     logging.info("Loaded value model from %s", checkpoint_dir)
