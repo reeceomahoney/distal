@@ -734,7 +734,7 @@ dependencies = [
     { name = "rerun-sdk" },
     { name = "runpod" },
     { name = "scikit-learn" },
-    { name = "skypilot", extra = ["kubernetes", "runpod", "vast"] },
+    { name = "skypilot-nightly", extra = ["kubernetes", "runpod", "vast"] },
     { name = "slurm-tools" },
     { name = "vastai" },
 ]
@@ -759,7 +759,7 @@ requires-dist = [
     { name = "rerun-sdk", specifier = ">=0.22" },
     { name = "runpod", specifier = ">=1.8.2" },
     { name = "scikit-learn", specifier = ">=1.3.0" },
-    { name = "skypilot", extras = ["vast", "kubernetes", "runpod"], specifier = ">=0.8" },
+    { name = "skypilot-nightly", extras = ["vast", "kubernetes", "runpod"], specifier = ">=0.8" },
     { name = "slurm-tools", git = "https://github.com/reeceomahoney/slurm-tools.git" },
     { name = "vastai", specifier = ">=0.2.8" },
 ]
@@ -3366,8 +3366,8 @@ wheels = [
 ]
 
 [[package]]
-name = "skypilot"
-version = "0.12.0"
+name = "skypilot-nightly"
+version = "1.0.0.dev20260326"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aiofiles" },
@@ -3421,9 +3421,9 @@ dependencies = [
     { name = "uvicorn", extra = ["standard"] },
     { name = "wheel" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/3d/d1/c8d4aa096e16264e59d9fae5ef4ff800923734dd2e44c63cfdded09d0784/skypilot-0.12.0.tar.gz", hash = "sha256:fd9dccd3582a8f537e068ca41797ca15e7034d837262fa3dab98a4d81abbc66f", size = 3117896, upload-time = "2026-03-24T01:08:15.648Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/54/cc/d55315b52012951f5e5420825eb33270e4501b2d5f913291c81a4088a606/skypilot_nightly-1.0.0.dev20260326.tar.gz", hash = "sha256:45d9cb7c21d9cde9c8a8f86096ecea23696ee2751ffce4032eebe8bbdc24a350", size = 3149342, upload-time = "2026-03-26T14:31:48.998Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/95/c6/458ac91086fdc2e39671a65b0280fa00030c6056b182399b9d1e6402ac27/skypilot-0.12.0-py3-none-any.whl", hash = "sha256:4f94be114ef33d6930a2e72ffeae58aa2e2297e025dc5c4b28c2a626798728c3", size = 3434758, upload-time = "2026-03-24T01:08:12.708Z" },
+    { url = "https://files.pythonhosted.org/packages/4f/a8/291e956c0ea235d5bb1d2135f1d71031aa9b23063ca4db6e0240a94ad8fc/skypilot_nightly-1.0.0.dev20260326-py3-none-any.whl", hash = "sha256:05acc490fc64f73b7488347d14c109acc3e3e55800866e7091608db1c2af32b4", size = 3466646, upload-time = "2026-03-26T14:31:46.298Z" },
 ]
 
 [package.optional-dependencies]
