@@ -32,16 +32,16 @@ from distal.value_model import ValueFunction
 
 @dataclass
 class ComputeAdvantageLabelsConfig:
-    value_checkpoint: str = "reece-omahoney/value-success-expert-eighth-eplen"
-    pretrained_path: str = "reece-omahoney/adv-libero-base"
+    value_checkpoint: str = "reece-omahoney/value-maha-penalty"
+    policy_checkpoint: str = "reece-omahoney/adv-libero-base"
     dataset_repo_id: str = "reece-omahoney/libero-10"
+    new_dataset_repo_id: str = "reece-omahoney/libero-10-adv-maha-penalty"
+    push_to_hub: bool = True
     device: str = "cuda"
     n_step: int = 10
     advantage_percentile: float = 0.7
     batch_size: int = 256
     num_workers: int = 16
-    push_to_hub: bool = True
-    new_dataset_repo_id: str = "reece-omahoney/libero-10-adv-success-eighth-eplen"
 
 
 def compute_all_values(
@@ -132,9 +132,9 @@ def main(cfg: ComputeAdvantageLabelsConfig):
     print("Loading value model...")
     value_model = ValueFunction.from_pretrained(cfg.value_checkpoint)
     value_model.to(device).eval()
-    policy_cfg = PreTrainedConfig.from_pretrained(cfg.pretrained_path)
+    policy_cfg = PreTrainedConfig.from_pretrained(cfg.policy_checkpoint)
     preprocessor, _ = make_pre_post_processors(
-        policy_cfg, pretrained_path=cfg.pretrained_path
+        policy_cfg, pretrained_path=cfg.policy_checkpoint
     )
 
     # Compute V(s) for all samples

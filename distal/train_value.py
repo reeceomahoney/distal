@@ -32,13 +32,13 @@ from distal.value_model import ValueConfig, ValueFunction
 class TrainValueConfig:
     dataset_repo_id: str = "reece-omahoney/libero-10"
     gamma: float = 1.0
-    reward_type: str = "steps"  # "steps" or "maha"
+    reward_type: str = "maha"  # "steps" or "maha"
     failure_penalty_scale: float = 0.125
     stats_repo_id: str = "reece-omahoney/maha-stats"
     base_policy: str = "reece-omahoney/adv-libero-base"
 
     value: ValueConfig = field(default_factory=ValueConfig)
-    value_repo_id: str = "reece-omahoney/value-success-eighth-eplen"
+    value_repo_id: str = "reece-omahoney/value-maha-penalty"
     push_to_hub: bool = True
 
     # Training
@@ -210,7 +210,18 @@ def main(cfg: TrainValueConfig):
 
     # Push to hub
     if cfg.push_to_hub:
+        from huggingface_hub import upload_file
+
+        from distal.rewards import REWARD_CONTEXT_FILENAME
+
         model.push_to_hub(cfg.value_repo_id)
+
+        reward_context_path = final_dir / REWARD_CONTEXT_FILENAME
+        upload_file(
+            path_or_fileobj=str(reward_context_path),
+            path_in_repo=REWARD_CONTEXT_FILENAME,
+            repo_id=cfg.value_repo_id,
+        )
         print(f"Pushed to https://huggingface.co/{cfg.value_repo_id}")
 
 
