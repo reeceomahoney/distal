@@ -14,11 +14,12 @@ envs:
   WANDB_API_KEY:
   MUJOCO_GL: egl
   PYOPENGL_PLATFORM: egl
-
+  # CMAKE_POLICY_VERSION_MINIMUM: 3.5
+  # MUJOCO_EGL_DEVICE_ID: 0
 workdir: .
 
 setup: |
-  apt-get update && apt-get install -y libegl1 libgl1 libglvnd0 libopengl0
+  sudo apt-get update && sudo apt-get install -y libegl1 libgl1 libglvnd0 libopengl0 cmake g++
 
   curl https://mise.run | sh
   echo 'eval "$($HOME/.local/bin/mise activate bash)"' >> ~/.bashrc
@@ -31,15 +32,15 @@ setup: |
 
   mkdir ~/.libero
   cat <<EOF > ~/.libero/config.yaml
-  assets: /root/sky_workdir/.venv/lib/python3.12/site-packages/libero/libero/./assets
-  bddl_files: /root/sky_workdir/.venv/lib/python3.12/site-packages/libero/libero/./bddl_files
-  benchmark_root: /root/sky_workdir/.venv/lib/python3.12/site-packages/libero/libero
-  datasets: /root/sky_workdir/.venv/lib/python3.12/site-packages/libero/libero/../datasets
-  init_states: /root/sky_workdir/.venv/lib/python3.12/site-packages/libero/libero/./init_files
+  assets: $HOME/sky_workdir/.venv/lib/python3.12/site-packages/libero/libero/./assets
+  bddl_files: $HOME/sky_workdir/.venv/lib/python3.12/site-packages/libero/libero/./bddl_files
+  benchmark_root: $HOME/sky_workdir/.venv/lib/python3.12/site-packages/libero/libero
+  datasets: $HOME/sky_workdir/.venv/lib/python3.12/site-packages/libero/libero/../datasets
+  init_states: $HOME/sky_workdir/.venv/lib/python3.12/site-packages/libero/libero/./init_files
   EOF
 
   cd ~/sky_workdir
-  python /root/sky_workdir/.venv/lib/python3.12/site-packages/robosuite/scripts/setup_macros.py
+  python ~/sky_workdir/.venv/lib/python3.12/site-packages/robosuite/scripts/setup_macros.py
 
 run: |
   cd ~/sky_workdir
