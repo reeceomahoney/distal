@@ -25,12 +25,15 @@ def main(cfg: EvalVarianceConfig):
         print(f"  Run {i + 1}/{cfg.n_runs}")
         print(f"{'=' * 60}\n", flush=True)
 
+        seed = i * 1000
+
         cmd = [
             sys.executable,
             "-m",
             "lerobot.scripts.lerobot_eval",
             "--config_path=configs/eval.yaml",
             f"--policy.path={cfg.policy_path}",
+            f"--seed={seed}",
         ]
 
         result = subprocess.run(cmd, capture_output=False)
