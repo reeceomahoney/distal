@@ -5,7 +5,7 @@ eval_freq: 5000
 save_freq: 5000
 
 dataset:
-  repo_id: reece-omahoney/libero-10-adv-success-expert
+  repo_id: reece-omahoney/libero-10-adv-steps-penalty
   use_imagenet_stats: false
 
 env:
