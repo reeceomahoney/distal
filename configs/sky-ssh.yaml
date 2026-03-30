@@ -15,6 +15,7 @@ envs:
   PYOPENGL_PLATFORM: egl
   CMAKE_POLICY_VERSION_MINIMUM: 3.5
   MUJOCO_EGL_DEVICE_ID: 0
+  SLURM_JOB_ID: 0  # suppress tqdm
 workdir: .
 
 setup: |
