@@ -16,9 +16,11 @@ dependencies = [
   "lerobot_policy_advantage",
   "slurm-tools",
   "vastai>=0.2.8",
-  "skypilot-nightly[vast, kubernetes, runpod]>=0.8",
+  "skypilot-nightly[vast, kubernetes, runpod, gcp]>=0.8",
   "runpod>=1.8.2",
   "pyroute2>=0.9.5",
+  "google-api-python-client>=2.193.0",
+  "google-cloud-tpu>=1.26.0",
 ]
 
 [dependency-groups]
