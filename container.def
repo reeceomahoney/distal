@@ -31,6 +31,12 @@ NVJSON
     export PATH="/root/.local/bin:$PATH"
     cd /opt/distal && uv sync --frozen
 
+    curl https://mise.run | sh
+    echo 'eval "$($HOME/.local/bin/mise activate bash)"' >> ~/.bashrc
+    eval "$(mise activate bash)"
+    cd /opt/distal
+    mise trust
+
     # Suppress robotsuite warning
     /opt/distal/.venv/bin/python -m robosuite.scripts.setup_macros
 
