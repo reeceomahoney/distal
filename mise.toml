@@ -26,7 +26,7 @@ run = """
 lerobot-eval --config_path configs/eval.yaml \
   --policy.path=reece-omahoney/adv-libero-base \
   --policy.compile_model=true \
-  --policy.device=cuda:1"
+  --policy.device=cuda:1
 """
 
 # Hardware
