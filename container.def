@@ -26,15 +26,14 @@ NVJSON
         libosmesa6-dev libglfw3 \
     && rm -rf /var/lib/apt/lists/*
 
-    # Main install
+    # Install python packages
     curl -LsSf https://astral.sh/uv/install.sh | sh
     export PATH="/root/.local/bin:$PATH"
     cd /opt/distal && uv sync --frozen
 
+    # Install mise
     curl https://mise.run | sh
     echo 'eval "$($HOME/.local/bin/mise activate bash)"' >> ~/.bashrc
-    cd /opt/distal
-    $HOME/.local/bin/mise trust
 
     # Suppress robotsuite warning
     /opt/distal/.venv/bin/python -m robosuite.scripts.setup_macros
@@ -57,4 +56,5 @@ NVJSON
 
 %runscript
     . /opt/distal/.venv/bin/activate
+    mise trust
     exec "$@"
