@@ -156,7 +156,7 @@ class AdvantageVLAFlowMatching(VLAFlowMatching):
     def _build_prefix_kv_cache(self, prefix_embs, prefix_pad_masks, prefix_att_masks):
         """Build KV cache from prefix embeddings."""
         att_2d_masks = make_att_2d_masks(prefix_pad_masks, prefix_att_masks)
-        position_ids = torch.cumsum(prefix_pad_masks, dim=1) - 1
+        position_ids = torch.cumsum(prefix_pad_masks.long(), dim=1) - 1
         _, past_key_values = self.vlm_with_expert.forward(
             attention_mask=att_2d_masks,
             position_ids=cast(torch.LongTensor, position_ids),
