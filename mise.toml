@@ -17,7 +17,6 @@ lerobot-train --config_path configs/advantage_train.yaml \
   --policy.repo_id=reece-omahoney/{{ usage.name }} \
   --policy.fixed_advantage=false \
   --policy.advantage_dropout=0.3 \
-  --policy.compile_model=true \
 """
 
 [tasks.eval]
@@ -25,7 +24,6 @@ description = "Evaluate policy in LIBERO sim"
 run = """
 lerobot-eval --config_path configs/eval.yaml \
   --policy.path=reece-omahoney/adv-libero-base \
-  --policy.compile_model=true \
   --policy.device=cuda:1
 """
 

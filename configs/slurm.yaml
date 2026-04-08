@@ -11,6 +11,6 @@ time: 12
 gpu: h100
 ngpu: 1
 cpus: 16
-mem: 8G
+mem: 16G
 priority: true
 dry_run: false
