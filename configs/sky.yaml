@@ -1,13 +1,9 @@
 name: distal-train
 
 resources:
-  cloud: gcp
-  accelerators: tpu-v4-8
-  zone: us-central2-b
-  accelerator_args:
-    runtime_version: tpu-ubuntu2204-base
-  # cpus: 16+
-  # disk_size: 64
+  cloud: vast
+  accelerators: RTXPRO6000WS
+  disk_size: 64
   autostop:
     idle_minutes: 10
     down: true
