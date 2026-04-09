@@ -117,7 +117,7 @@ class ValueFunction(PreTrainedPolicy):
             num_vlm_layers=config.num_vlm_layers,
             # hardcoded from smolvla checkpoint
             self_attn_every_n_layers=2,
-            expert_width_multiplier=0.5,
+            expert_width_multiplier=0.75,
             device="cpu",
         )
 
