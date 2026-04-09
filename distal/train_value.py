@@ -32,13 +32,13 @@ from distal.value_model import ValueConfig, ValueFunction
 class TrainValueConfig:
     dataset_repo_id: str = "reece-omahoney/libero-10"
     gamma: float = 1.0
-    reward_type: str = "maha"  # "steps" or "maha"
-    failure_penalty_scale: float = 0.125
+    reward_type: str = "steps"  # "steps" or "maha"
+    failure_penalty_scale: float = 1.0
     stats_repo_id: str = "reece-omahoney/maha-stats"
     base_policy: str = "reece-omahoney/adv-libero-base"
 
     value: ValueConfig = field(default_factory=ValueConfig)
-    value_repo_id: str = "reece-omahoney/value-maha-penalty"
+    value_repo_id: str = "reece-omahoney/value-steps-50-bins"
     push_to_hub: bool = True
 
     # Training
@@ -110,11 +110,9 @@ def main(cfg: TrainValueConfig):
     )
 
     # ── Model & preprocessor ──
-    if cfg.value.pretrained_path:
-        model = ValueFunction.from_pretrained(str(cfg.value.pretrained_path))
-        print(f"Loaded pretrained value model from {cfg.value.pretrained_path}")
-    else:
-        model = ValueFunction(cfg.value)
+    model = ValueFunction(cfg.value)
+    if cfg.base_policy:
+        model.load_vlm_from_policy(cfg.base_policy)
     model = model.to(device)
     preprocessor, _ = make_advantage_pre_post_processors(AdvantageConfig())
 
