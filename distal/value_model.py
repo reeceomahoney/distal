@@ -1,9 +1,10 @@
 """Distributional value function using SmolVLM backbone.
 
-Initializes from a trained SmolVLA policy checkpoint, extracting just the VLM
-(vision encoder + language model). Uses the last token's hidden state as the
-value representation, fed through an MLP value head that predicts returns as a
-categorical distribution over discrete bins (RECAP-style from pi0.6).
+Initializes from a trained SmolVLA policy checkpoint, reusing the full VLM
+forward path (SmolVLMWithExpertModel) for compatibility with the pretrained
+weights. The expert is instantiated but unused — value is extracted from the
+VLM's last prefix token hidden state, fed through an MLP value head that
+predicts returns as a categorical distribution over discrete bins.
 
 Supports partial unfreezing: vision encoder is always frozen, and optionally
 only the top N language model layers are unfrozen for fine-tuning.
@@ -24,22 +25,22 @@ from lerobot.optim.schedulers import (
 )
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.policies.smolvla.modeling_smolvla import (
+    make_att_2d_masks,
     pad_vector,
     resize_with_pad,
 )
+from lerobot.policies.smolvla.smolvlm_with_expert import SmolVLMWithExpertModel
 from lerobot.utils.constants import (
     OBS_LANGUAGE_ATTENTION_MASK,
     OBS_LANGUAGE_TOKENS,
     OBS_STATE,
 )
 from torch import Tensor, nn
-from transformers import AutoModelForImageTextToText, AutoProcessor
 
 
 @PreTrainedConfig.register_subclass("value")
 @dataclass
 class ValueConfig(PreTrainedConfig):
-    pretrained_path: str = "reece-omahoney/adv-libero-base"
     vlm_model_name: str = "HuggingFaceTB/SmolVLM2-500M-Video-Instruct"
     resize_imgs_with_padding: tuple[int, int] = (256, 256)
     max_state_dim: int = 8
@@ -49,6 +50,7 @@ class ValueConfig(PreTrainedConfig):
     freeze_vision_encoder: bool = True
     num_unfrozen_layers: int = 3
     hl_gauss_sigma: float = 0.0
+    self_attn_every_n_layers: int = 2
 
     # Training presets
     optimizer_lr: float = 1e-4
@@ -107,19 +109,19 @@ class ValueFunction(PreTrainedPolicy):
     def __init__(self, config: ValueConfig, **kwargs):
         super().__init__(config)
 
-        self.vlm = AutoModelForImageTextToText.from_pretrained(
-            config.vlm_model_name,
-            torch_dtype="bfloat16",
-            low_cpu_mem_usage=True,
+        self.vlm_with_expert = SmolVLMWithExpertModel(
+            model_id=config.vlm_model_name,
+            freeze_vision_encoder=config.freeze_vision_encoder,
+            train_expert_only=False,
+            load_vlm_weights=True,
+            attention_mode="cross_attn",
+            num_vlm_layers=config.num_vlm_layers,
+            self_attn_every_n_layers=config.self_attn_every_n_layers,
+            expert_width_multiplier=0.1,
+            device="cpu",
         )
-        self.processor = AutoProcessor.from_pretrained(config.vlm_model_name)
 
-        # Truncate VLM layers if needed
-        if config.num_vlm_layers > 0:
-            text_model = self.vlm.model.text_model
-            text_model.layers = text_model.layers[: config.num_vlm_layers]
-
-        vlm_hidden = self.vlm.config.text_config.hidden_size
+        vlm_hidden = self.vlm_with_expert.config.text_config.hidden_size
 
         # State projection (same as SmolVLA)
         self.state_proj = nn.Linear(config.max_state_dim, vlm_hidden)
@@ -135,8 +137,12 @@ class ValueFunction(PreTrainedPolicy):
         self.register_buffer("bin_centers", torch.linspace(-1.0, 0.0, config.n_bins))
 
         # Special tokens for image wrapping
-        self.fake_image_token = self.processor.tokenizer.fake_image_token_id
-        self.global_image_token = self.processor.tokenizer.global_image_token_id
+        self.fake_image_token = (
+            self.vlm_with_expert.processor.tokenizer.fake_image_token_id
+        )
+        self.global_image_token = (
+            self.vlm_with_expert.processor.tokenizer.global_image_token_id
+        )
         self.global_image_start_token = torch.tensor(
             [self.fake_image_token, self.global_image_token], dtype=torch.long
         )
@@ -145,12 +151,7 @@ class ValueFunction(PreTrainedPolicy):
         self.set_requires_grad()
 
     def load_vlm_from_policy(self, policy_path: str):
-        """Load VLM weights from a trained SmolVLA policy checkpoint.
-
-        Extracts the VLM and state_proj weights from the policy's
-        model.vlm_with_expert state dict. Accepts a local path or a
-        HuggingFace Hub repo ID.
-        """
+        """Load VLM and state_proj weights from a SmolVLA policy checkpoint."""
         from pathlib import Path
 
         from safetensors.torch import load_file
@@ -171,38 +172,24 @@ class ValueFunction(PreTrainedPolicy):
 
         policy_weights = load_file(safetensors_path)
 
-        vlm_state = {}
+        # Extract vlm_with_expert and state_proj weights
+        vlm_expert_state = {}
         state_proj_state = {}
         for key, value in policy_weights.items():
-            # SmolVLA stores VLM as model.vlm_with_expert.vlm.*
-            if key.startswith("model.vlm_with_expert.vlm."):
-                new_key = key.removeprefix("model.vlm_with_expert.vlm.")
-                vlm_state[new_key] = value
-            # State projection
+            if key.startswith("model.vlm_with_expert."):
+                new_key = key.removeprefix("model.vlm_with_expert.")
+                vlm_expert_state[new_key] = value
             elif key.startswith("model.state_proj."):
                 new_key = key.removeprefix("model.state_proj.")
                 state_proj_state[new_key] = value
 
-        # Handle layer truncation: filter out layers beyond num_vlm_layers
-        if self.config.num_vlm_layers > 0:
-            filtered_vlm_state = {}
-            for key, value in vlm_state.items():
-                if "text_model.layers." in key:
-                    parts = key.split(".")
-                    layer_idx_pos = parts.index("layers") + 1
-                    layer_idx = int(parts[layer_idx_pos])
-                    if layer_idx >= self.config.num_vlm_layers:
-                        continue
-                filtered_vlm_state[key] = value
-            vlm_state = filtered_vlm_state
-
-        missing, unexpected = self.vlm.load_state_dict(vlm_state, strict=False)
-        # lm_head is expected to be missing since we don't use it
-        missing = [k for k in missing if not k.startswith("lm_head")]
+        missing, unexpected = self.vlm_with_expert.load_state_dict(
+            vlm_expert_state, strict=False
+        )
         if missing:
-            print(f"Warning: missing VLM keys: {missing[:10]}")
+            print(f"Warning: missing keys: {missing[:10]}")
         if unexpected:
-            print(f"Warning: unexpected VLM keys: {unexpected[:10]}")
+            print(f"Warning: unexpected keys: {unexpected[:10]}")
 
         if state_proj_state:
             self.state_proj.load_state_dict(state_proj_state)
@@ -211,65 +198,118 @@ class ValueFunction(PreTrainedPolicy):
         print(f"Loaded VLM weights from {policy_path}")
 
     def set_requires_grad(self):
-        """Freeze vision encoder and optionally freeze all but top N LM layers."""
+        """Freeze vision, expert, and bottom VLM layers.
+
+        Only the top N VLM layers, state_proj, and value_head are trainable.
+        """
         # Freeze vision encoder
-        vision_model = self.vlm.model.vision_model
+        vision_model = self.vlm_with_expert.get_vlm_model().vision_model
         vision_model.eval()
         for p in vision_model.parameters():
             p.requires_grad = False
 
-        # Freeze connector (multimodal projector) - keep frozen like vision
-        for p in self.vlm.model.connector.parameters():
+        # Freeze the entire expert (unused for value prediction)
+        for p in self.vlm_with_expert.lm_expert.parameters():
             p.requires_grad = False
 
-        # Freeze lm_head (unused for value prediction)
-        if hasattr(self.vlm, "lm_head"):
-            for p in self.vlm.lm_head.parameters():
-                p.requires_grad = False
+        # Freeze VLM lm_head (unused)
+        for p in self.vlm_with_expert.vlm.lm_head.parameters():
+            p.requires_grad = False
 
-        # Freeze LM layers except the top N
-        text_model = self.vlm.model.text_model
-        num_layers = len(text_model.layers)
-        num_frozen = num_layers - self.config.num_unfrozen_layers
+        # Freeze connector
+        for p in self.vlm_with_expert.get_vlm_model().connector.parameters():
+            p.requires_grad = False
 
         # Freeze embeddings
-        if text_model.get_input_embeddings() is not None:
-            for p in text_model.get_input_embeddings().parameters():
+        embed = self.vlm_with_expert.get_vlm_model().text_model.get_input_embeddings()
+        if embed is not None:
+            for p in embed.parameters():
                 p.requires_grad = False
 
-        # Freeze bottom layers
+        # Freeze bottom VLM layers, keep top N unfrozen
+        text_layers = self.vlm_with_expert.get_vlm_model().text_model.layers
+        num_layers = len(text_layers)
+        num_frozen = num_layers - self.config.num_unfrozen_layers
         for i in range(num_frozen):
-            for p in text_model.layers[i].parameters():
+            for p in text_layers[i].parameters():
                 p.requires_grad = False
 
-        # Final norm stays trainable (it's after the unfrozen layers)
         trainable = sum(p.numel() for p in self.parameters() if p.requires_grad)
         total = sum(p.numel() for p in self.parameters())
         print(
-            f"Value model: {trainable:,} trainable / {total:,} total params "
-            f"({num_frozen} frozen + {self.config.num_unfrozen_layers} "
-            f"unfrozen LM layers)"
+            f"Value model: {trainable:,} trainable / {total:,} total "
+            f"({num_frozen} frozen + "
+            f"{self.config.num_unfrozen_layers} unfrozen VLM layers)"
         )
 
     def train(self, mode: bool = True):
         super().train(mode)
-        # Keep vision encoder in eval mode
-        self.vlm.model.vision_model.eval()
+        self.vlm_with_expert.get_vlm_model().vision_model.eval()
+        self.vlm_with_expert.lm_expert.eval()
         return self
 
-    def embed_image(self, image: Tensor) -> Tensor:
-        """Embed image through vision encoder + connector."""
-        vision_model = self.vlm.model.vision_model
-        image_hidden_states = vision_model(
-            pixel_values=image.to(dtype=vision_model.dtype),
-            patch_attention_mask=None,
-        ).last_hidden_state
-        image_hidden_states = self.vlm.model.connector(image_hidden_states)
-        return image_hidden_states
+    def embed_prefix(
+        self,
+        images: list[Tensor],
+        img_masks: list[Tensor],
+        lang_tokens: Tensor,
+        lang_masks: Tensor,
+        state: Tensor,
+    ) -> tuple[Tensor, Tensor, Tensor]:
+        """Embed images, language, and state into prefix tokens.
 
-    def embed_language_tokens(self, tokens: Tensor) -> Tensor:
-        """Embed language tokens through the VLM's text embedding layer."""
-        return self.vlm.model.text_model.get_input_embeddings()(tokens)
+        Mirrors VLAFlowMatching.embed_prefix to stay compatible with
+        SmolVLMWithExpertModel's forward path.
+        """
+        embs: list[Tensor] = []
+        pad_masks: list[Tensor] = []
+        att_masks: list[int] = []
+
+        for img, img_mask in zip(images, img_masks, strict=False):
+            img_emb = self.vlm_with_expert.embed_image(img)
+            img_emb_dim = img_emb.shape[-1]
+            img_emb = img_emb * torch.tensor(
+                img_emb_dim**0.5,
+                dtype=img_emb.dtype,
+                device=img_emb.device,
+            )
+            bsize, num_img_embs = img_emb.shape[:2]
+            img_mask = img_mask[:, None].expand(bsize, num_img_embs)
+            embs.append(img_emb)
+            pad_masks.append(img_mask)
+            att_masks += [0] * num_img_embs
+
+        # Language tokens (bidirectional)
+        lang_emb = self.vlm_with_expert.embed_language_tokens(lang_tokens)
+        lang_emb_dim = lang_emb.shape[-1]
+        lang_emb = lang_emb * math.sqrt(lang_emb_dim)
+        embs.append(lang_emb)
+        pad_masks.append(lang_masks)
+        att_masks += [0] * lang_emb.shape[1]
+
+        # State (causal)
+        state_emb = self.state_proj(state)
+        state_emb = state_emb[:, None, :] if state_emb.ndim == 2 else state_emb
+        bsize = state_emb.shape[0]
+        device = state_emb.device
+        state_mask = torch.ones(
+            bsize,
+            state_emb.shape[1],
+            dtype=torch.bool,
+            device=device,
+        )
+        embs.append(state_emb)
+        pad_masks.append(state_mask)
+        att_masks += [1] * state_emb.shape[1]
+
+        embs_cat = torch.cat(embs, dim=1)
+        pad_masks_cat = torch.cat(pad_masks, dim=1)
+        att_masks_t = torch.tensor(
+            att_masks, dtype=torch.bool, device=pad_masks_cat.device
+        )
+        att_masks_t = att_masks_t[None, :].expand(bsize, -1)
+
+        return embs_cat, pad_masks_cat, att_masks_t
 
     def prepare_images(
         self, batch: dict[str, Tensor]
@@ -298,96 +338,38 @@ class ValueFunction(PreTrainedPolicy):
     def compute_logits(self, batch: dict[str, Tensor]) -> Tensor:
         """Forward pass returning logits over value bins.
 
-        Embeds images, language, and state into a single sequence, runs through
-        the VLM text model, and extracts the last token's hidden state for the
-        value head.
+        Passes prefix (images + language + state) through SmolVLA's VLM
+        forward path with no suffix (expert unused). Extracts the last
+        token's VLM hidden state for the value head.
         """
         images, img_masks = self.prepare_images(batch)
         state = self.prepare_state(batch)
         lang_tokens = batch[OBS_LANGUAGE_TOKENS]
         lang_masks = batch[OBS_LANGUAGE_ATTENTION_MASK]
 
-        # Build sequence: [images... | language | state]
-        embs: list[Tensor] = []
-        pad_masks: list[Tensor] = []
-        att_ar: list[int] = []
-
-        for img, img_mask in zip(images, img_masks, strict=False):
-            img_emb = self.embed_image(img)
-            img_emb_dim = img_emb.shape[-1]
-            img_emb = img_emb * torch.tensor(
-                img_emb_dim**0.5, dtype=img_emb.dtype, device=img_emb.device
-            )
-            bsize, num_img_embs = img_emb.shape[:2]
-            img_mask = img_mask[:, None].expand(bsize, num_img_embs)
-            embs.append(img_emb)
-            pad_masks.append(img_mask)
-            att_ar += [0] * num_img_embs
-
-        # Language tokens (bidirectional)
-        lang_emb = self.embed_language_tokens(lang_tokens)
-        lang_emb_dim = lang_emb.shape[-1]
-        lang_emb = lang_emb * math.sqrt(lang_emb_dim)
-        embs.append(lang_emb)
-        pad_masks.append(lang_masks)
-        att_ar += [0] * lang_emb.shape[1]
-
-        # State (causal — value will be read from here)
-        state_emb = self.state_proj(state)
-        state_emb = state_emb[:, None, :] if state_emb.ndim == 2 else state_emb
-        bsize = state_emb.shape[0]
-        device = state_emb.device
-        state_mask = torch.ones(
-            bsize, state_emb.shape[1], dtype=torch.bool, device=device
-        )
-        embs.append(state_emb)
-        pad_masks.append(state_mask)
-        att_ar += [1] * state_emb.shape[1]
-
-        # Concatenate
-        inputs_embeds = torch.cat(embs, dim=1)
-        pad_mask = torch.cat(pad_masks, dim=1)
-        att_ar_t = (
-            torch.tensor(att_ar, dtype=torch.long, device=device)
-            .unsqueeze(0)
-            .expand(bsize, -1)
+        prefix_embs, prefix_pad_masks, prefix_att_masks = self.embed_prefix(
+            images, img_masks, lang_tokens, lang_masks, state
         )
 
-        # Build 4D attention mask matching SmolVLA's pattern:
-        # bidirectional for images+language (att_ar=0),
-        # causal for state (att_ar=1)
-        cumsum = torch.cumsum(att_ar_t, dim=1)
-        att_2d = cumsum[:, None, :] <= cumsum[:, :, None]  # (B, L, L)
-        pad_2d = pad_mask[:, None, :] * pad_mask[:, :, None]
-        att_2d = att_2d & pad_2d
+        # Build attention mask (prefix only, no suffix)
+        att_2d_masks = make_att_2d_masks(prefix_pad_masks, prefix_att_masks)
+        position_ids = torch.cumsum(prefix_pad_masks.long(), dim=1) - 1
 
-        # Convert bool mask to 4D float mask for HF (0=attend, -inf=mask)
-        att_4d = torch.where(
-            att_2d.unsqueeze(1),
-            torch.tensor(0.0, device=device),
-            torch.tensor(torch.finfo(torch.bfloat16).min, device=device),
-        )
-
-        # Position IDs from padding mask
-        position_ids = torch.cumsum(pad_mask.long(), dim=1) - 1
-        position_ids = position_ids.clamp(min=0)
-
-        # Forward through VLM text model
-        text_model = self.vlm.model.text_model
-        outputs = text_model(
-            inputs_embeds=inputs_embeds.to(
-                dtype=text_model.layers[0].self_attn.q_proj.weight.dtype
-            ),
-            attention_mask=att_4d,
-            position_ids=position_ids,
+        # Forward through VLM only (suffix=None skips expert)
+        (prefix_out, _), _ = self.vlm_with_expert.forward(
+            attention_mask=att_2d_masks,
+            position_ids=cast(torch.LongTensor, position_ids),
+            past_key_values=None,
+            inputs_embeds=cast(list[torch.FloatTensor], [prefix_embs, None]),
+            use_cache=False,
+            fill_kv_cache=True,
         )
 
         # Extract last real token per sample
-        seq_lengths = pad_mask.long().sum(dim=1) - 1  # (B,)
-        hidden_states = outputs.last_hidden_state  # (B, L, H)
-        last_hidden = hidden_states[
-            torch.arange(bsize, device=device), seq_lengths
-        ]  # (B, H)
+        bsize = prefix_embs.shape[0]
+        device = prefix_embs.device
+        seq_lengths = prefix_pad_masks.long().sum(dim=1) - 1
+        last_hidden = prefix_out[torch.arange(bsize, device=device), seq_lengths]
 
         logits = self.value_head(last_hidden.to(dtype=torch.float32))
         return logits
@@ -395,9 +377,9 @@ class ValueFunction(PreTrainedPolicy):
     def forward(self, batch: dict[str, Tensor]) -> tuple[Tensor, dict]:
         """Training forward pass: compute cross-entropy loss over value bins.
 
-        Expects batch to contain a "returns" key with (B,) float tensor in [-1, 0].
-        When hl_gauss_sigma > 0, uses soft Gaussian targets (HL-Gauss) instead of
-        one-hot targets.
+        Expects batch to contain a "returns" key with (B,) float tensor
+        in [-1, 0]. When hl_gauss_sigma > 0, uses soft Gaussian targets
+        (HL-Gauss) instead of one-hot targets.
         """
         logits = self.compute_logits(batch)
         returns = batch["returns"]
@@ -436,7 +418,7 @@ class ValueFunction(PreTrainedPolicy):
         return F.one_hot(bin_indices, num_classes=n_bins).float()
 
     def returns_to_hl_gauss(self, returns: Tensor, n_bins: int, sigma: float) -> Tensor:
-        """Convert returns to soft Gaussian targets over bins (HL-Gauss)."""
+        """Convert returns to soft Gaussian targets over bins."""
         returns = returns.clamp(-1.0, 0.0)
         bin_centers = cast(Tensor, self.bin_centers)
         diff = returns.unsqueeze(-1) - bin_centers.unsqueeze(0)
