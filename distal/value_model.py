@@ -257,17 +257,17 @@ class ValueFunction(PreTrainedPolicy):
             img_emb = self.vlm_with_expert.embed_image(img)
             img_emb_dim = img_emb.shape[-1]
             img_emb = img_emb * torch.tensor(
-                img_emb_dim**0.5,
-                dtype=img_emb.dtype,
-                device=img_emb.device,
+                img_emb_dim**0.5, dtype=img_emb.dtype, device=img_emb.device
             )
+
             bsize, num_img_embs = img_emb.shape[:2]
             img_mask = img_mask[:, None].expand(bsize, num_img_embs)
+
             embs.append(img_emb)
             pad_masks.append(img_mask)
             att_masks += [0] * num_img_embs
 
-        # Language tokens (bidirectional)
+        # Language tokens
         lang_emb = self.vlm_with_expert.embed_language_tokens(lang_tokens)
         lang_emb_dim = lang_emb.shape[-1]
         lang_emb = lang_emb * math.sqrt(lang_emb_dim)
@@ -275,18 +275,16 @@ class ValueFunction(PreTrainedPolicy):
         pad_masks.append(lang_masks)
         att_masks += [0] * lang_emb.shape[1]
 
-        # State (causal)
+        # State
         state_emb = self.state_proj(state)
         state_emb = state_emb[:, None, :] if state_emb.ndim == 2 else state_emb
+        embs.append(state_emb)
         bsize = state_emb.shape[0]
         device = state_emb.device
+
         state_mask = torch.ones(
-            bsize,
-            state_emb.shape[1],
-            dtype=torch.bool,
-            device=device,
+            bsize, state_emb.shape[1], dtype=torch.bool, device=device
         )
-        embs.append(state_emb)
         pad_masks.append(state_mask)
         att_masks += [1] * state_emb.shape[1]
 
