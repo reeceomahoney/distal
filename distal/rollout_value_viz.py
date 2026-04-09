@@ -14,7 +14,7 @@ import torch
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.envs.configs import LiberoEnv as LiberoEnvConfig
 from lerobot.envs.factory import make_env, make_env_pre_post_processors
-from lerobot.envs.utils import add_envs_task, preprocess_observation
+from lerobot.envs.utils import preprocess_observation
 from lerobot.policies.factory import make_policy, make_pre_post_processors
 from lerobot.policies.smolvla.modeling_smolvla import SmolVLAPolicy
 from lerobot.utils.constants import ACTION
@@ -38,6 +38,17 @@ class RolloutValueVizConfig:
 
 def to_hwc_uint8(chw_float: torch.Tensor) -> np.ndarray:
     return (chw_float.clamp(0, 1) * 255).to(torch.uint8).permute(1, 2, 0).cpu().numpy()
+
+
+def add_task(observation: dict, vec_env) -> dict:
+    try:
+        observation["task"] = list(vec_env.call("task_description"))
+    except (AttributeError, NotImplementedError):
+        try:
+            observation["task"] = list(vec_env.call("task"))
+        except (AttributeError, NotImplementedError):
+            observation["task"] = [""] * vec_env.num_envs
+    return observation
 
 
 def rollout_with_values(
@@ -67,7 +78,7 @@ def rollout_with_values(
         range(max_steps), desc=f"seed={seed}", leave=False, disable=disable_bar
     ):
         observation = preprocess_observation(observation)
-        observation = add_envs_task(vec_env, observation)
+        observation = add_task(observation, vec_env)
         observation = env_preprocessor(observation)
         raw_obs = deepcopy(observation)
         observation = preprocessor(observation)
