@@ -1784,7 +1784,7 @@ wheels = [
 [[package]]
 name = "lerobot"
 version = "0.5.2"
-source = { git = "https://github.com/reeceomahoney/lerobot?rev=fix%2Frollout-return-observations-nested-dict#52cbaf6855f423789ffb28e1baa02a99d722953b" }
+source = { git = "https://github.com/reeceomahoney/lerobot?rev=fix%2Frollout-return-observations-nested-dict#325f9748a6c7710e4b8544713fe05d35386df631" }
 dependencies = [
     { name = "accelerate" },
     { name = "av" },
