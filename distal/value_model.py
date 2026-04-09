@@ -310,6 +310,7 @@ class ValueFunction(PreTrainedPolicy):
         # Build sequence: [images... | language | state]
         embs: list[Tensor] = []
         pad_masks: list[Tensor] = []
+        att_ar: list[int] = []
 
         for img, img_mask in zip(images, img_masks, strict=False):
             img_emb = self.embed_image(img)
@@ -321,15 +322,17 @@ class ValueFunction(PreTrainedPolicy):
             img_mask = img_mask[:, None].expand(bsize, num_img_embs)
             embs.append(img_emb)
             pad_masks.append(img_mask)
+            att_ar += [0] * num_img_embs
 
-        # Language tokens
+        # Language tokens (bidirectional)
         lang_emb = self.embed_language_tokens(lang_tokens)
         lang_emb_dim = lang_emb.shape[-1]
         lang_emb = lang_emb * math.sqrt(lang_emb_dim)
         embs.append(lang_emb)
         pad_masks.append(lang_masks)
+        att_ar += [0] * lang_emb.shape[1]
 
-        # State (last tokens — value will be read from here)
+        # State (causal — value will be read from here)
         state_emb = self.state_proj(state)
         state_emb = state_emb[:, None, :] if state_emb.ndim == 2 else state_emb
         bsize = state_emb.shape[0]
@@ -339,16 +342,34 @@ class ValueFunction(PreTrainedPolicy):
         )
         embs.append(state_emb)
         pad_masks.append(state_mask)
+        att_ar += [1] * state_emb.shape[1]
 
         # Concatenate
         inputs_embeds = torch.cat(embs, dim=1)
         pad_mask = torch.cat(pad_masks, dim=1)
+        att_ar_t = (
+            torch.tensor(att_ar, dtype=torch.long, device=device)
+            .unsqueeze(0)
+            .expand(bsize, -1)
+        )
 
-        # Build causal attention mask (1 = attend, 0 = ignore)
-        attention_mask = pad_mask.long()
+        # Build 4D attention mask matching SmolVLA's pattern:
+        # bidirectional for images+language (att_ar=0),
+        # causal for state (att_ar=1)
+        cumsum = torch.cumsum(att_ar_t, dim=1)
+        att_2d = cumsum[:, None, :] <= cumsum[:, :, None]  # (B, L, L)
+        pad_2d = pad_mask[:, None, :] * pad_mask[:, :, None]
+        att_2d = att_2d & pad_2d
 
-        # Position IDs from attention mask
-        position_ids = torch.cumsum(attention_mask, dim=1) - 1
+        # Convert bool mask to 4D float mask for HF (0=attend, -inf=mask)
+        att_4d = torch.where(
+            att_2d.unsqueeze(1),
+            torch.tensor(0.0, device=device),
+            torch.tensor(torch.finfo(torch.bfloat16).min, device=device),
+        )
+
+        # Position IDs from padding mask
+        position_ids = torch.cumsum(pad_mask.long(), dim=1) - 1
         position_ids = position_ids.clamp(min=0)
 
         # Forward through VLM text model
@@ -357,12 +378,12 @@ class ValueFunction(PreTrainedPolicy):
             inputs_embeds=inputs_embeds.to(
                 dtype=text_model.layers[0].self_attn.q_proj.weight.dtype
             ),
-            attention_mask=attention_mask,
+            attention_mask=att_4d,
             position_ids=position_ids,
         )
 
         # Extract last real token per sample
-        seq_lengths = attention_mask.sum(dim=1) - 1  # (B,)
+        seq_lengths = pad_mask.long().sum(dim=1) - 1  # (B,)
         hidden_states = outputs.last_hidden_state  # (B, L, H)
         last_hidden = hidden_states[
             torch.arange(bsize, device=device), seq_lengths
