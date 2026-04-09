@@ -136,18 +136,6 @@ class ValueFunction(PreTrainedPolicy):
         # Bin centers for computing expected value
         self.register_buffer("bin_centers", torch.linspace(-1.0, 0.0, config.n_bins))
 
-        # Special tokens for image wrapping
-        self.fake_image_token = (
-            self.vlm_with_expert.processor.tokenizer.fake_image_token_id
-        )
-        self.global_image_token = (
-            self.vlm_with_expert.processor.tokenizer.global_image_token_id
-        )
-        self.global_image_start_token = torch.tensor(
-            [self.fake_image_token, self.global_image_token], dtype=torch.long
-        )
-        self.image_end_token = torch.tensor([self.fake_image_token], dtype=torch.long)
-
         self.set_requires_grad()
 
     def load_vlm_from_policy(self, policy_path: str):
