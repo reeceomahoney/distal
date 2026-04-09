@@ -111,7 +111,7 @@ class ValueFunction(PreTrainedPolicy):
         self.vlm_with_expert = SmolVLMWithExpertModel(
             model_id=config.vlm_model_name,
             freeze_vision_encoder=config.freeze_vision_encoder,
-            train_expert_only=False,
+            train_expert_only=True,
             load_vlm_weights=True,
             attention_mode="cross_attn",
             num_vlm_layers=config.num_vlm_layers,
@@ -186,41 +186,21 @@ class ValueFunction(PreTrainedPolicy):
         print(f"Loaded VLM weights from {policy_path}")
 
     def set_requires_grad(self):
-        """Freeze vision, expert, and bottom VLM layers.
+        """Unfreeze top N VLM layers, state_proj, and value_head.
 
-        Only the top N VLM layers, state_proj, and value_head are trainable.
+        SmolVLMWithExpertModel with train_expert_only=True freezes the entire
+        VLM. We selectively unfreeze just the top N language model layers and
+        freeze the expert (unused for value prediction).
         """
-        # Freeze vision encoder
-        vision_model = self.vlm_with_expert.get_vlm_model().vision_model
-        vision_model.eval()
-        for p in vision_model.parameters():
-            p.requires_grad = False
-
-        # Freeze the entire expert (unused for value prediction)
         for p in self.vlm_with_expert.lm_expert.parameters():
             p.requires_grad = False
 
-        # Freeze VLM lm_head (unused)
-        for p in self.vlm_with_expert.vlm.lm_head.parameters():
-            p.requires_grad = False
-
-        # Freeze connector
-        for p in self.vlm_with_expert.get_vlm_model().connector.parameters():
-            p.requires_grad = False
-
-        # Freeze embeddings
-        embed = self.vlm_with_expert.get_vlm_model().text_model.get_input_embeddings()
-        if embed is not None:
-            for p in embed.parameters():
-                p.requires_grad = False
-
-        # Freeze bottom VLM layers, keep top N unfrozen
         text_layers = self.vlm_with_expert.get_vlm_model().text_model.layers
         num_layers = len(text_layers)
         num_frozen = num_layers - self.config.num_unfrozen_layers
-        for i in range(num_frozen):
+        for i in range(num_frozen, num_layers):
             for p in text_layers[i].parameters():
-                p.requires_grad = False
+                p.requires_grad = True
 
         trainable = sum(p.numel() for p in self.parameters() if p.requires_grad)
         total = sum(p.numel() for p in self.parameters())
