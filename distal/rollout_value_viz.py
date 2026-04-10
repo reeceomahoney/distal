@@ -111,19 +111,10 @@ def rollout_with_values(
 
         observation, _, terminated, truncated, info = vec_env.step(action_np)
 
-        if "final_info" in info:
-            is_success = info["final_info"].get("is_success")
-            if is_success is not None:
-                for ei in range(n_envs):
-                    if dones[ei]:
-                        continue
-                    val = (
-                        is_success[ei] if hasattr(is_success, "__len__") else is_success
-                    )
-                    if hasattr(val, "item"):
-                        val = val.item()
-                    if val:
-                        successes[ei] = True
+        if info["done"].any():
+            for ei in range(n_envs):
+                if info["done"][ei] and info["is_success"][ei]:
+                    successes[ei] = True
 
         for ei in range(n_envs):
             if bool(terminated[ei]) or bool(truncated[ei]):
