@@ -17,23 +17,19 @@ import draccus
 import numpy as np
 import pandas as pd
 import torch
-from lerobot.configs.policies import PreTrainedConfig
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
-from lerobot.policies.factory import make_pre_post_processors
 from torch.utils.data import DataLoader
 
-import lerobot_policy_advantage as lerobot_policy_advantage
 from distal.rewards import (
     compute_nstep_advantages,
     load_reward_context,
 )
-from distal.value_model import ValueFunction
+from distal.value_model import ValueFunction, make_value_pre_post_processors
 
 
 @dataclass
 class ComputeAdvantageLabelsConfig:
     value_checkpoint: str = "reece-omahoney/value-steps-penalty"
-    policy_checkpoint: str = "reece-omahoney/adv-libero-base"
     dataset_repo_id: str = "reece-omahoney/libero-10"
     new_dataset_repo_id: str = "reece-omahoney/libero-10-adv-steps-penalty"
     push_to_hub: bool = True
@@ -132,10 +128,7 @@ def main(cfg: ComputeAdvantageLabelsConfig):
     print("Loading value model...")
     value_model = ValueFunction.from_pretrained(cfg.value_checkpoint)
     value_model.to(device).eval()
-    policy_cfg = PreTrainedConfig.from_pretrained(cfg.policy_checkpoint)
-    preprocessor, _ = make_pre_post_processors(
-        policy_cfg, pretrained_path=cfg.policy_checkpoint
-    )
+    preprocessor, _ = make_value_pre_post_processors(value_model.config)
 
     # Compute V(s) for all samples
     print("Computing values for all samples...")

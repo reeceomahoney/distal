@@ -18,14 +18,14 @@ import torch
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.datasets.utils import cycle
 from lerobot.optim.schedulers import CosineDecayWithWarmupSchedulerConfig
-from lerobot_policy_advantage.configuration_advantage import AdvantageConfig
-from lerobot_policy_advantage.processor_advantage import (
-    make_advantage_pre_post_processors,
-)
 from torch.utils.data import DataLoader
 
 from distal.rewards import build_reward_context, save_reward_context
-from distal.value_model import ValueConfig, ValueFunction
+from distal.value_model import (
+    ValueConfig,
+    ValueFunction,
+    make_value_pre_post_processors,
+)
 
 
 @dataclass
@@ -35,7 +35,6 @@ class TrainValueConfig:
     reward_type: str = "steps"  # "steps" or "maha"
     failure_penalty_scale: float = 1.0
     stats_repo_id: str = "reece-omahoney/maha-stats"
-    base_policy: str = "reece-omahoney/smolvla-libero-bsz-256"
 
     value: ValueConfig = field(default_factory=ValueConfig)
     value_repo_id: str = "reece-omahoney/value-steps-new-arch"
@@ -111,10 +110,8 @@ def main(cfg: TrainValueConfig):
 
     # ── Model & preprocessor ──
     model = ValueFunction(cfg.value)
-    if cfg.base_policy:
-        model.load_vlm_from_policy(cfg.base_policy)
     model = model.to(device)
-    preprocessor, _ = make_advantage_pre_post_processors(AdvantageConfig())
+    preprocessor, _ = make_value_pre_post_processors(cfg.value)
 
     # ── Optimizer & scheduler ──
     optimizer_cfg = cfg.value.get_optimizer_preset()

@@ -21,8 +21,7 @@ from lerobot.utils.constants import ACTION
 from lerobot.utils.utils import inside_slurm
 from tqdm import tqdm
 
-import lerobot_policy_advantage as lerobot_policy_advantage
-from distal.value_model import ValueFunction
+from distal.value_model import ValueFunction, make_value_pre_post_processors
 
 
 @dataclass
@@ -172,10 +171,7 @@ def main(cfg: RolloutValueVizConfig):
     # Load value model & value preprocessor
     value_model = ValueFunction.from_pretrained(cfg.value_checkpoint)
     value_model.to(device).eval()
-    value_policy_cfg = PreTrainedConfig.from_pretrained(cfg.policy_path)
-    value_preprocessor, _ = make_pre_post_processors(
-        value_policy_cfg, pretrained_path=cfg.policy_path
-    )
+    value_preprocessor, _ = make_value_pre_post_processors(value_model.config)
     print(f"Loaded value model from {cfg.value_checkpoint}")
 
     # Rollout

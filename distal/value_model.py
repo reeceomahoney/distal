@@ -1,18 +1,17 @@
-"""Distributional value function using SmolVLM backbone.
+"""Distributional value function using SigLIP + Gemma backbone.
 
-Initializes from a trained SmolVLA policy checkpoint, reusing the full VLM
-forward path (SmolVLMWithExpertModel) for compatibility with the pretrained
-weights. The expert is instantiated but unused — value is extracted from the
-VLM's last prefix token hidden state, fed through an MLP value head that
-predicts returns as a categorical distribution over discrete bins.
-
-Supports partial unfreezing: vision encoder is always frozen, and optionally
-only the top N language model layers are unfrozen for fine-tuning.
+Uses a SigLIP vision encoder for image features and a Gemma language model
+for joint processing of visual tokens and text (task description + discretized
+state). Pi0.5-style architecture: vision features projected and scaled by
+sqrt(embed_dim), state discretized into 256 bins as text, bidirectional
+attention in Gemma. Value extracted from last token hidden state, fed through
+an MLP value head that predicts returns as a categorical distribution over
+discrete bins.
 """
 
 import math
 from dataclasses import dataclass, field
-from typing import cast
+from typing import Any
 
 import torch
 import torch.nn.functional as F
@@ -23,33 +22,39 @@ from lerobot.optim.schedulers import (
     CosineDecayWithWarmupSchedulerConfig,
     LRSchedulerConfig,
 )
+from lerobot.policies.pi05.processor_pi05 import Pi05PrepareStateTokenizerProcessorStep
 from lerobot.policies.pretrained import PreTrainedPolicy
-from lerobot.policies.smolvla.modeling_smolvla import (
-    make_att_2d_masks,
-    pad_vector,
-    resize_with_pad,
+from lerobot.processor import (
+    AddBatchDimensionProcessorStep,
+    DeviceProcessorStep,
+    NormalizerProcessorStep,
+    PolicyAction,
+    PolicyProcessorPipeline,
+    ProcessorStep,
+    RenameObservationsProcessorStep,
+    TokenizerProcessorStep,
 )
-from lerobot.policies.smolvla.smolvlm_with_expert import SmolVLMWithExpertModel
 from lerobot.utils.constants import (
     OBS_LANGUAGE_ATTENTION_MASK,
     OBS_LANGUAGE_TOKENS,
-    OBS_STATE,
+    POLICY_POSTPROCESSOR_DEFAULT_NAME,
+    POLICY_PREPROCESSOR_DEFAULT_NAME,
 )
 from torch import Tensor, nn
+from transformers import Gemma3ForCausalLM, SiglipVisionModel
 
 
 @PreTrainedConfig.register_subclass("value")
 @dataclass
 class ValueConfig(PreTrainedConfig):
-    vlm_model_name: str = "HuggingFaceTB/SmolVLM2-500M-Video-Instruct"
-    resize_imgs_with_padding: tuple[int, int] = (256, 256)
-    max_state_dim: int = 8
-    n_bins: int = 50
+    vision_model_name: str = "google/siglip-base-patch16-224"
+    lm_model_name: str = "google/gemma-3-270m"
+    n_bins: int = 201
     tokenizer_max_length: int = 48
-    num_vlm_layers: int = 16
     freeze_vision_encoder: bool = True
-    num_unfrozen_layers: int = 3
     hl_gauss_sigma: float = 0.0
+    value_head_depth: int = 1
+    value_head_hidden_dim: int = 768
 
     # Training presets
     optimizer_lr: float = 1e-4
@@ -100,6 +105,72 @@ class ValueConfig(PreTrainedConfig):
         pass
 
 
+def make_value_pre_post_processors(
+    config: ValueConfig,
+    dataset_stats: dict[str, dict[str, Tensor]] | None = None,
+) -> tuple[
+    PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
+    PolicyProcessorPipeline[PolicyAction, PolicyAction],
+]:
+    """Construct pre/post processors for the value model.
+
+    Uses Pi0.5-style state discretization (256 bins) and tokenizes with the
+    Gemma 3 tokenizer to match the value model's language backbone.
+    """
+    input_steps: list[ProcessorStep] = [
+        RenameObservationsProcessorStep(rename_map={}),
+        AddBatchDimensionProcessorStep(),
+        NormalizerProcessorStep(
+            features=config.input_features or {},
+            norm_map=config.normalization_mapping,  # type: ignore[arg-type]
+            stats=dataset_stats,
+        ),
+        Pi05PrepareStateTokenizerProcessorStep(max_state_dim=32),
+        TokenizerProcessorStep(
+            tokenizer_name=config.lm_model_name,
+            max_length=config.tokenizer_max_length,
+            padding_side="right",
+            padding="max_length",
+        ),
+        DeviceProcessorStep(device=config.device or "cpu"),
+    ]
+
+    output_steps: list[ProcessorStep] = [
+        DeviceProcessorStep(device="cpu"),
+    ]
+
+    return (
+        PolicyProcessorPipeline[dict[str, Any], dict[str, Any]](
+            steps=input_steps,
+            name=POLICY_PREPROCESSOR_DEFAULT_NAME,
+        ),
+        PolicyProcessorPipeline[PolicyAction, PolicyAction](
+            steps=output_steps,
+            name=POLICY_POSTPROCESSOR_DEFAULT_NAME,
+        ),
+    )
+
+
+class MLPHead(nn.Module):
+    """MLP projection head with GELU activations.
+
+    With depth=1: Linear(in_dim, hidden_dim) -> GELU -> Linear(hidden_dim, out_dim)
+    With depth>1: repeated Linear -> GELU blocks, final Linear to out_dim.
+    """
+
+    def __init__(self, in_dim: int, hidden_dim: int, out_dim: int, depth: int = 1):
+        super().__init__()
+        layers: list[nn.Module] = []
+        for i in range(depth):
+            layers.append(nn.Linear(in_dim if i == 0 else hidden_dim, hidden_dim))
+            layers.append(nn.GELU())
+        layers.append(nn.Linear(hidden_dim, out_dim))
+        self.net = nn.Sequential(*layers)
+
+    def forward(self, x: Tensor) -> Tensor:
+        return self.net(x)
+
+
 class ValueFunction(PreTrainedPolicy):
     name = "value"
     config_class = ValueConfig
@@ -108,234 +179,121 @@ class ValueFunction(PreTrainedPolicy):
     def __init__(self, config: ValueConfig, **kwargs):
         super().__init__(config)
 
-        self.vlm_with_expert = SmolVLMWithExpertModel(
-            model_id=config.vlm_model_name,
-            freeze_vision_encoder=config.freeze_vision_encoder,
-            train_expert_only=True,
-            load_vlm_weights=True,
-            attention_mode="cross_attn",
-            num_vlm_layers=config.num_vlm_layers,
-            # hardcoded from smolvla checkpoint
-            self_attn_every_n_layers=2,
-            expert_width_multiplier=0.75,
-            device="cpu",
+        # Vision encoder (SigLIP)
+        self.vision_encoder = SiglipVisionModel.from_pretrained(
+            config.vision_model_name
         )
+        vision_hidden = self.vision_encoder.config.hidden_size
+        self.image_size = self.vision_encoder.config.image_size
 
-        vlm_hidden = self.vlm_with_expert.config.text_config.hidden_size
+        # Language model (Gemma with bidirectional attention)
+        self.language_model = Gemma3ForCausalLM.from_pretrained(
+            config.lm_model_name,
+            torch_dtype=torch.bfloat16,
+        )
+        self.language_model.model.config.use_bidirectional_attention = True
+        gemma_hidden: int = self.language_model.config.hidden_size  # type: ignore[assignment]
 
-        # State projection (same as SmolVLA)
-        self.state_proj = nn.Linear(config.max_state_dim, vlm_hidden)
+        # Vision projection: SigLIP features -> Gemma token dimension
+        self.vision_proj = nn.Linear(vision_hidden, gemma_hidden)
+        self.vision_scale = math.sqrt(gemma_hidden)
 
-        # Value head: vlm_hidden → logits over bins
-        self.value_head = nn.Sequential(
-            nn.Linear(vlm_hidden, vlm_hidden),
-            nn.SiLU(),
-            nn.Linear(vlm_hidden, config.n_bins),
+        # Value head
+        hidden_dim = config.value_head_hidden_dim
+        self.value_head = MLPHead(
+            gemma_hidden, hidden_dim, config.n_bins, depth=config.value_head_depth
         )
 
         # Bin centers for computing expected value
+        self.bin_centers: Tensor
         self.register_buffer("bin_centers", torch.linspace(-1.0, 0.0, config.n_bins))
 
         self.set_requires_grad()
 
-    def load_vlm_from_policy(self, policy_path: str):
-        """Load VLM and state_proj weights from a SmolVLA policy checkpoint."""
-        from pathlib import Path
-
-        from safetensors.torch import load_file
-
-        path = Path(policy_path)
-        if path.exists():
-            safetensors_path = (
-                str(path)
-                if path.suffix == ".safetensors"
-                else str(path / "model.safetensors")
-            )
-        else:
-            from huggingface_hub import hf_hub_download
-
-            safetensors_path = hf_hub_download(
-                policy_path, "model.safetensors", repo_type="model"
-            )
-
-        policy_weights = load_file(safetensors_path)
-
-        # Extract vlm_with_expert and state_proj weights
-        vlm_expert_state = {}
-        state_proj_state = {}
-        for key, value in policy_weights.items():
-            if key.startswith("model.vlm_with_expert."):
-                new_key = key.removeprefix("model.vlm_with_expert.")
-                vlm_expert_state[new_key] = value
-            elif key.startswith("model.state_proj."):
-                new_key = key.removeprefix("model.state_proj.")
-                state_proj_state[new_key] = value
-
-        missing, unexpected = self.vlm_with_expert.load_state_dict(
-            vlm_expert_state, strict=False
-        )
-        if missing:
-            print(f"Warning: missing keys: {missing[:10]}")
-        if unexpected:
-            print(f"Warning: unexpected keys: {unexpected[:10]}")
-
-        if state_proj_state:
-            self.state_proj.load_state_dict(state_proj_state)
-            print("Loaded state_proj from policy checkpoint")
-
-        print(f"Loaded VLM weights from {policy_path}")
-
     def set_requires_grad(self):
-        """Unfreeze top N VLM layers, state_proj, and value_head.
-
-        SmolVLMWithExpertModel with train_expert_only=True freezes the entire
-        VLM. We selectively unfreeze just the top N language model layers and
-        freeze the expert (unused for value prediction).
-        """
-        for p in self.vlm_with_expert.lm_expert.parameters():
-            p.requires_grad = False
-
-        text_layers = self.vlm_with_expert.get_vlm_model().text_model.layers
-        num_layers = len(text_layers)
-        num_frozen = num_layers - self.config.num_unfrozen_layers
-        for i in range(num_frozen, num_layers):
-            for p in text_layers[i].parameters():
-                p.requires_grad = True
+        """Freeze vision encoder only. Everything else is trainable."""
+        if self.config.freeze_vision_encoder:
+            for p in self.vision_encoder.parameters():
+                p.requires_grad = False
 
         trainable = sum(p.numel() for p in self.parameters() if p.requires_grad)
         total = sum(p.numel() for p in self.parameters())
+        frozen = total - trainable
         print(
-            f"Value model: {trainable:,} trainable / {total:,} total "
-            f"({num_frozen} frozen + "
-            f"{self.config.num_unfrozen_layers} unfrozen VLM layers)"
+            f"Value model: {trainable:,} trainable / "
+            f"{total:,} total ({frozen:,} frozen)"
         )
 
     def train(self, mode: bool = True):
         super().train(mode)
-        self.vlm_with_expert.get_vlm_model().vision_model.eval()
-        self.vlm_with_expert.lm_expert.eval()
+        self.vision_encoder.eval()
         return self
 
-    def embed_prefix(
-        self,
-        images: list[Tensor],
-        img_masks: list[Tensor],
-        lang_tokens: Tensor,
-        lang_masks: Tensor,
-        state: Tensor,
-    ) -> tuple[Tensor, Tensor, Tensor]:
-        """Embed images, language, and state into prefix tokens.
-
-        Mirrors VLAFlowMatching.embed_prefix to stay compatible with
-        SmolVLMWithExpertModel's forward path.
-        """
-        embs: list[Tensor] = []
-        pad_masks: list[Tensor] = []
-        att_masks: list[int] = []
-
-        for img, img_mask in zip(images, img_masks, strict=False):
-            img_emb = self.vlm_with_expert.embed_image(img)
-            img_emb_dim = img_emb.shape[-1]
-            img_emb = img_emb * torch.tensor(
-                img_emb_dim**0.5, dtype=img_emb.dtype, device=img_emb.device
-            )
-
-            bsize, num_img_embs = img_emb.shape[:2]
-            img_mask = img_mask[:, None].expand(bsize, num_img_embs)
-
-            embs.append(img_emb)
-            pad_masks.append(img_mask)
-            att_masks += [0] * num_img_embs
-
-        # Language tokens
-        lang_emb = self.vlm_with_expert.embed_language_tokens(lang_tokens)
-        lang_emb_dim = lang_emb.shape[-1]
-        lang_emb = lang_emb * math.sqrt(lang_emb_dim)
-        embs.append(lang_emb)
-        pad_masks.append(lang_masks)
-        att_masks += [0] * lang_emb.shape[1]
-
-        # State
-        state_emb = self.state_proj(state)
-        state_emb = state_emb[:, None, :] if state_emb.ndim == 2 else state_emb
-        embs.append(state_emb)
-        bsize = state_emb.shape[0]
-        device = state_emb.device
-
-        state_mask = torch.ones(
-            bsize, state_emb.shape[1], dtype=torch.bool, device=device
-        )
-        pad_masks.append(state_mask)
-        att_masks += [1] * state_emb.shape[1]
-
-        embs_cat = torch.cat(embs, dim=1)
-        pad_masks_cat = torch.cat(pad_masks, dim=1)
-        att_masks_t = torch.tensor(
-            att_masks, dtype=torch.bool, device=pad_masks_cat.device
-        )
-        att_masks_t = att_masks_t[None, :].expand(bsize, -1)
-
-        return embs_cat, pad_masks_cat, att_masks_t
-
-    def prepare_images(
-        self, batch: dict[str, Tensor]
-    ) -> tuple[list[Tensor], list[Tensor]]:
-        """Resize, pad, and normalize images for SigLIP."""
+    def prepare_images(self, batch: dict[str, Tensor]) -> list[Tensor]:
+        """Resize, normalize images for SigLIP."""
         img_keys = sorted(k for k in batch if k.startswith("observation.images."))
         images = []
-        img_masks = []
         for key in img_keys:
             img = batch[key]
             img = img[:, -1] if img.ndim == 5 else img
-            w, h = self.config.resize_imgs_with_padding
-            img = resize_with_pad(img, w, h, pad_value=-1)
-            img = img * 2.0 - 1.0
+            img = F.interpolate(
+                img,
+                size=(self.image_size, self.image_size),
+                mode="bilinear",
+                align_corners=False,
+            )
+            img = img * 2.0 - 1.0  # [0,1] -> [-1,1] for SigLIP
             images.append(img)
-            mask = torch.ones(img.shape[0], dtype=torch.bool, device=img.device)
-            img_masks.append(mask)
-        return images, img_masks
-
-    def prepare_state(self, batch: dict[str, Tensor]) -> Tensor:
-        """Pad state to max_state_dim."""
-        state = batch[OBS_STATE]
-        state = state[:, -1] if state.ndim > 2 else state
-        return pad_vector(state, self.config.max_state_dim)
+        return images
 
     def compute_logits(self, batch: dict[str, Tensor]) -> Tensor:
         """Forward pass returning logits over value bins.
 
-        Passes prefix (images + language + state) through SmolVLA's VLM
-        forward path with no suffix (expert unused). Extracts the last
-        token's VLM hidden state for the value head.
+        Encodes images through SigLIP, projects to Gemma dimension, embeds
+        pre-tokenized text, concatenates, and processes through Gemma with
+        bidirectional attention. Extracts last valid token for value head.
         """
-        images, img_masks = self.prepare_images(batch)
-        state = self.prepare_state(batch)
+        images = self.prepare_images(batch)
         lang_tokens = batch[OBS_LANGUAGE_TOKENS]
         lang_masks = batch[OBS_LANGUAGE_ATTENTION_MASK]
+        device = lang_tokens.device
+        bsize = lang_tokens.shape[0]
 
-        prefix_embs, prefix_pad_masks, prefix_att_masks = self.embed_prefix(
-            images, img_masks, lang_tokens, lang_masks, state
+        # Encode images through SigLIP + projection
+        all_img_embeds = []
+        all_img_masks = []
+        for img in images:
+            with torch.no_grad():
+                vision_out = self.vision_encoder(pixel_values=img)
+            patch_embeds = vision_out.last_hidden_state
+            img_emb = self.vision_proj(patch_embeds) * self.vision_scale
+            all_img_embeds.append(img_emb)
+            num_patches = img_emb.shape[1]
+            all_img_masks.append(
+                torch.ones(bsize, num_patches, dtype=lang_masks.dtype, device=device)
+            )
+
+        # Embed pre-tokenized text
+        text_embeds = self.language_model.model.embed_tokens(lang_tokens)
+        text_embeds = text_embeds * math.sqrt(text_embeds.shape[-1])
+
+        # Concatenate: [img1_tokens, img2_tokens, ..., text_tokens]
+        combined_embeds = torch.cat(
+            [e.to(text_embeds.dtype) for e in all_img_embeds] + [text_embeds], dim=1
         )
+        combined_mask = torch.cat(all_img_masks + [lang_masks], dim=1)
 
-        # Build attention mask (prefix only, no suffix)
-        att_2d_masks = make_att_2d_masks(prefix_pad_masks, prefix_att_masks)
-        position_ids = torch.cumsum(prefix_pad_masks.long(), dim=1) - 1
-
-        # Forward through VLM only (suffix=None skips expert)
-        (prefix_out, _), _ = self.vlm_with_expert.forward(
-            attention_mask=att_2d_masks,
-            position_ids=cast(torch.LongTensor, position_ids),
-            past_key_values=None,
-            inputs_embeds=cast(list[torch.FloatTensor], [prefix_embs, None]),
-            use_cache=False,
-            fill_kv_cache=True,
+        # Forward through Gemma with bidirectional attention
+        outputs = self.language_model.model(
+            inputs_embeds=combined_embeds,
+            attention_mask=combined_mask,
+            output_hidden_states=True,
         )
+        hidden_states = outputs.last_hidden_state
 
-        # Extract last real token per sample
-        bsize = prefix_embs.shape[0]
-        device = prefix_embs.device
-        seq_lengths = prefix_pad_masks.long().sum(dim=1) - 1
-        last_hidden = prefix_out[torch.arange(bsize, device=device), seq_lengths]
+        # Pool: last valid token per sequence
+        seq_lengths = combined_mask.long().sum(dim=1) - 1
+        last_hidden = hidden_states[torch.arange(bsize, device=device), seq_lengths]
 
         logits = self.value_head(last_hidden.to(dtype=torch.float32))
         return logits
@@ -373,7 +331,7 @@ class ValueFunction(PreTrainedPolicy):
     def logits_to_value(self, logits: Tensor) -> Tensor:
         """Expected value from logits via softmax + dot with bin centers."""
         probs = F.softmax(logits, dim=-1)
-        return (probs * cast(Tensor, self.bin_centers)).sum(dim=-1)
+        return (probs * self.bin_centers).sum(dim=-1)
 
     @staticmethod
     def returns_to_bins(returns: Tensor, n_bins: int = 50) -> Tensor:
@@ -386,7 +344,7 @@ class ValueFunction(PreTrainedPolicy):
     def returns_to_hl_gauss(self, returns: Tensor, n_bins: int, sigma: float) -> Tensor:
         """Convert returns to soft Gaussian targets over bins."""
         returns = returns.clamp(-1.0, 0.0)
-        bin_centers = cast(Tensor, self.bin_centers)
+        bin_centers = self.bin_centers
         diff = returns.unsqueeze(-1) - bin_centers.unsqueeze(0)
         log_probs = -0.5 * (diff / sigma) ** 2
         return F.softmax(log_probs, dim=-1)
