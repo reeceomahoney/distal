@@ -46,7 +46,7 @@ class TrainValueConfig:
 
     # Logging & checkpointing
     log_interval: int = 100
-    save_interval: int = 3_000
+    save_interval: int = 5_000
     output_dir: str | None = None
     wandb_project: str | None = "distal-value"
 
