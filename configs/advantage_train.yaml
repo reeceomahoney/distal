@@ -11,7 +11,7 @@ dataset:
 env:
   type: libero
   task: libero_10
-  fps: 10
+  fps: 20
   observation_height: 256
   observation_width: 256
 
