@@ -52,10 +52,11 @@ class ValueConfig(PreTrainedConfig):
     n_bins: int = 201
     tokenizer_max_length: int = 48
     freeze_vision_encoder: bool = True
-    freeze_language_model: bool = True
+    freeze_language_model: bool = False
     hl_gauss_sigma: float = 0.0
     value_head_depth: int = 1
     value_head_hidden_dim: int = 768
+    image_augmentation: bool = True
 
     # Training presets
     optimizer_lr: float = 1e-4
@@ -154,6 +155,92 @@ def make_value_pre_post_processors(
     )
 
 
+def augment_images(images: Tensor) -> Tensor:
+    """Random crop+resize, small rotation, and color jitter (fully batched).
+
+    Crop and rotation are fused into a single affine sampling grid; color
+    jitter is done with elementwise ops. All cameras within a sample share
+    the same spatial augmentation; color jitter is independent per image.
+
+    Args:
+        images: Tensor of shape [B, N, C, H, W] in [0, 1] or uint8.
+
+    Returns:
+        Augmented images with the same shape and dtype.
+    """
+    B, N, C, H, W = images.shape
+    dtype = images.dtype
+    device = images.device
+
+    imgs = images.float()
+    if imgs.max() > 1.0:
+        imgs = imgs / 255.0
+        was_uint8 = True
+    else:
+        was_uint8 = False
+
+    imgs = imgs.reshape(B * N, C, H, W)
+
+    # Per-sample crop scale/ratio/position (shared across cameras).
+    scale = torch.empty(B, device=device).uniform_(0.9, 1.0)
+    ratio = torch.empty(B, device=device).uniform_(0.95, 1.05)
+    sy = scale
+    sx = (scale * ratio).clamp(max=1.0)
+    ty = torch.rand(B, device=device) * (1.0 - sy)
+    tx = torch.rand(B, device=device) * (1.0 - sx)
+    cy = 2.0 * ty + sy - 1.0
+    cx = 2.0 * tx + sx - 1.0
+
+    # Per-sample rotation angle.
+    angles = torch.empty(B, device=device).uniform_(-5.0, 5.0) * math.pi / 180.0
+    cos_a = torch.cos(angles)
+    sin_a = torch.sin(angles)
+
+    # Affine grid: output [-1,1] -> input (crop window) with rotation about crop center.
+    theta = torch.zeros(B, 2, 3, device=device)
+    theta[:, 0, 0] = sx * cos_a
+    theta[:, 0, 1] = -sx * sin_a
+    theta[:, 0, 2] = cx
+    theta[:, 1, 0] = sy * sin_a
+    theta[:, 1, 1] = sy * cos_a
+    theta[:, 1, 2] = cy
+    theta = theta.unsqueeze(1).expand(B, N, 2, 3).reshape(B * N, 2, 3)
+
+    grid = F.affine_grid(theta, [B * N, C, H, W], align_corners=False)
+    imgs = F.grid_sample(
+        imgs, grid, mode="bilinear", padding_mode="zeros", align_corners=False
+    )
+
+    # Color jitter (independent per image). Matches torchvision semantics:
+    #   brightness: img * f
+    #   contrast:   (img - gray_mean) * f + gray_mean   (gray_mean = mean of luma)
+    #   saturation: (img - gray) * f + gray
+    BN = B * N
+    brightness = torch.empty(BN, 1, 1, 1, device=device).uniform_(0.9, 1.1)
+    contrast = torch.empty(BN, 1, 1, 1, device=device).uniform_(0.9, 1.1)
+    saturation = torch.empty(BN, 1, 1, 1, device=device).uniform_(0.9, 1.1)
+
+    imgs = imgs * brightness
+
+    luma_weights = torch.tensor([0.2989, 0.5870, 0.1140], device=device).view(
+        1, 3, 1, 1
+    )
+    gray = (imgs * luma_weights).sum(dim=1, keepdim=True)
+    gray_mean = gray.mean(dim=(2, 3), keepdim=True)
+    imgs = (imgs - gray_mean) * contrast + gray_mean
+
+    gray = (imgs * luma_weights).sum(dim=1, keepdim=True)
+    imgs = (imgs - gray) * saturation + gray
+
+    imgs = imgs.clamp(0.0, 1.0)
+    if was_uint8:
+        imgs = (imgs * 255.0).to(dtype)
+    else:
+        imgs = imgs.to(dtype)
+
+    return imgs.reshape(B, N, C, H, W)
+
+
 class MLPHead(nn.Module):
     """MLP projection head with GELU activations.
 
@@ -237,10 +324,19 @@ class ValueFunction(PreTrainedPolicy):
     def prepare_images(self, batch: dict[str, Tensor]) -> list[Tensor]:
         """Resize, normalize images for SigLIP."""
         img_keys = sorted(k for k in batch if k.startswith("observation.images."))
-        images = []
+        raw = []
         for key in img_keys:
             img = batch[key]
             img = img[:, -1] if img.ndim == 5 else img
+            raw.append(img)
+
+        if self.training and self.config.image_augmentation and raw:
+            stacked = torch.stack(raw, dim=1)  # [B, N, C, H, W]
+            stacked = augment_images(stacked)
+            raw = [stacked[:, n] for n in range(stacked.shape[1])]
+
+        images = []
+        for img in raw:
             img = F.interpolate(
                 img,
                 size=(self.image_size, self.image_size),
