@@ -52,12 +52,13 @@ class ValueConfig(PreTrainedConfig):
     n_bins: int = 201
     tokenizer_max_length: int = 48
     freeze_vision_encoder: bool = True
+    freeze_language_model: bool = True
     hl_gauss_sigma: float = 0.0
     value_head_depth: int = 1
     value_head_hidden_dim: int = 768
 
     # Training presets
-    optimizer_lr: float = 3e-4
+    optimizer_lr: float = 1e-4
     optimizer_betas: tuple[float, float] = (0.9, 0.95)
     optimizer_eps: float = 1e-8
     optimizer_weight_decay: float = 0.01
@@ -213,9 +214,11 @@ class ValueFunction(PreTrainedPolicy):
         self.set_requires_grad()
 
     def set_requires_grad(self):
-        """Freeze vision encoder only. Everything else is trainable."""
         if self.config.freeze_vision_encoder:
             for p in self.vision_encoder.parameters():
+                p.requires_grad = False
+        if self.config.freeze_language_model:
+            for p in self.language_model.parameters():
                 p.requires_grad = False
 
         trainable = sum(p.numel() for p in self.parameters() if p.requires_grad)

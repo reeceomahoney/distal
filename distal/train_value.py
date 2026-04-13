@@ -33,7 +33,7 @@ class TrainValueConfig:
     dataset_repo_id: str = "reece-omahoney/libero-10"
     gamma: float = 1.0
     reward_type: str = "steps"  # "steps" or "maha"
-    failure_penalty_scale: float = 0.125
+    failure_penalty_scale: float = 1.0
     stats_repo_id: str = "reece-omahoney/maha-stats"
 
     value: ValueConfig = field(default_factory=ValueConfig)
@@ -41,17 +41,18 @@ class TrainValueConfig:
     push_to_hub: bool = True
 
     # Training
-    batch_size: int = 128
+    batch_size: int = 32
     total_steps: int = 30_000
 
     # Logging & checkpointing
     log_interval: int = 100
+    plot_interval: int = 1_000
     save_interval: int = 5_000
     output_dir: str | None = None
     wandb_project: str | None = "distal-value"
 
     val_fraction: float = 0.1
-    num_workers: int = 8
+    num_workers: int = 4
     seed: int = 42
     use_amp: bool = True
 
@@ -108,6 +109,12 @@ def main(cfg: TrainValueConfig):
 
     train_indices = [i for i, ep in enumerate(episode_index) if ep in train_episodes]
     val_indices = [i for i, ep in enumerate(episode_index) if ep in val_episodes]
+    episode_to_indices: dict[int, list[int]] = {}
+    for i, ep in enumerate(episode_index):
+        episode_to_indices.setdefault(int(ep), []).append(i)
+    for ep in episode_to_indices:
+        episode_to_indices[ep].sort(key=lambda i: int(frame_index[i]))
+    plot_rng = random.Random(cfg.seed + 1)
     print(
         f"Train: {len(train_episodes)} episodes ({len(train_indices)} frames)  "
         f"Val: {len(val_episodes)} episodes ({len(val_indices)} frames)"
@@ -195,6 +202,14 @@ def main(cfg: TrainValueConfig):
 
         # ── Logging ──
         if step % cfg.log_interval == 0:
+            do_plot = bool(cfg.wandb_project) and step % cfg.plot_interval == 0
+            plot_ep_data: dict[int, list[tuple[int, float, float]]] = {}
+            if do_plot:
+                val_ep_sorted = sorted(val_episodes)
+                n_plot = min(4, len(val_ep_sorted))
+                plot_ep_ids = plot_rng.sample(val_ep_sorted, n_plot)
+                plot_ep_data = {ep: [] for ep in plot_ep_ids}
+
             model.eval()
             val_mae_sum = 0.0
             val_count = 0
@@ -208,6 +223,21 @@ def main(cfg: TrainValueConfig):
                     val_preds = model.logits_to_value(val_logits)
                     val_mae_sum += (val_preds - val_batch["returns"]).abs().sum().item()
                     val_count += val_preds.shape[0]
+
+                    if do_plot:
+                        idx_cpu = val_indices_batch.cpu().numpy()
+                        preds_cpu = val_preds.float().cpu().numpy()
+                        gts_cpu = val_batch["returns"].float().cpu().numpy()
+                        for j, gi in enumerate(idx_cpu):
+                            ep = int(episode_index[gi])
+                            if ep in plot_ep_data:
+                                plot_ep_data[ep].append(
+                                    (
+                                        int(frame_index[gi]),
+                                        float(preds_cpu[j]),
+                                        float(gts_cpu[j]),
+                                    )
+                                )
             val_mae = val_mae_sum / val_count
             model.train()
 
@@ -228,6 +258,31 @@ def main(cfg: TrainValueConfig):
             )
             if cfg.wandb_project:
                 wandb.log(log, step=step)
+
+            if do_plot:
+                import matplotlib.pyplot as plt
+
+                fig, axes = plt.subplots(2, 2, figsize=(10, 7))
+                axes_flat = axes.flatten()
+                for ax_idx, ep_id in enumerate(plot_ep_ids):
+                    rows = sorted(plot_ep_data[ep_id], key=lambda r: r[0])
+                    frames = [r[0] for r in rows]
+                    preds_arr = [r[1] for r in rows]
+                    gts_arr = [r[2] for r in rows]
+                    ax = axes_flat[ax_idx]
+                    ax.plot(frames, gts_arr, label="ground truth", linewidth=2)
+                    ax.plot(frames, preds_arr, label="predicted", linewidth=2)
+                    ax.set_xlabel("frame")
+                    ax.set_ylabel("return")
+                    ax.set_title(f"episode {ep_id}")
+                    ax.legend()
+                    ax.grid(alpha=0.3)
+                for ax_idx in range(len(plot_ep_ids), len(axes_flat)):
+                    axes_flat[ax_idx].axis("off")
+                fig.suptitle(f"step {step}")
+                fig.tight_layout()
+                wandb.log({"episode_value": wandb.Image(fig)}, step=step)
+                plt.close(fig)
 
         # ── Checkpointing ──
         if step % cfg.save_interval == 0:
