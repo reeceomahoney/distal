@@ -15,6 +15,7 @@ from pathlib import Path
 import draccus
 import numpy as np
 import torch
+import torch.nn.functional as F
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.datasets.utils import cycle
 from lerobot.optim.schedulers import CosineDecayWithWarmupSchedulerConfig
@@ -185,7 +186,7 @@ def main(cfg: TrainValueConfig):
         else nullcontext()
     )
 
-    best_val_mae = float("inf")
+    best_val_loss = float("inf")
     best_step = 0
     patience_counter = 0
     best_dir = output_dir / "checkpoint_best"
@@ -225,6 +226,7 @@ def main(cfg: TrainValueConfig):
                 plot_ep_data = {ep: [] for ep in plot_ep_ids}
 
             model.eval()
+            val_loss_sum = 0.0
             val_mae_sum = 0.0
             val_count = 0
             with torch.no_grad():
@@ -234,8 +236,23 @@ def main(cfg: TrainValueConfig):
                     val_batch["returns"] = returns_tensor[val_indices_batch]
                     with autocast:
                         val_logits = model.compute_logits(val_batch)
+                    val_returns = val_batch["returns"]
+                    if model.config.hl_gauss_sigma > 0:
+                        val_targets = model.returns_to_hl_gauss(
+                            val_returns,
+                            model.config.n_bins,
+                            model.config.hl_gauss_sigma,
+                        )
+                    else:
+                        val_targets = model.returns_to_bins(
+                            val_returns, model.config.n_bins
+                        )
+                    val_loss_batch = F.cross_entropy(
+                        val_logits.float(), val_targets, reduction="sum"
+                    )
                     val_preds = model.logits_to_value(val_logits)
-                    abs_err = (val_preds - val_batch["returns"]).abs()
+                    abs_err = (val_preds - val_returns).abs()
+                    val_loss_sum += val_loss_batch.item()
                     val_mae_sum += abs_err.sum().item()
                     val_count += val_preds.shape[0]
 
@@ -254,15 +271,16 @@ def main(cfg: TrainValueConfig):
                                     )
                                 )
             val_mae = val_mae_sum / val_count
+            val_loss = val_loss_sum / val_count
             model.train()
 
-            if val_mae < best_val_mae - cfg.early_stop_min_delta:
-                best_val_mae = val_mae
+            if val_loss < best_val_loss - cfg.early_stop_min_delta:
+                best_val_loss = val_loss
                 best_step = step
                 patience_counter = 0
                 model.save_pretrained(best_dir)
                 save_reward_context(best_dir, reward_context, dataset.num_frames)
-                print(f"New best val_mae={val_mae:.4f} at step {step}")
+                print(f"New best val_loss={val_loss:.4f} at step {step}")
             else:
                 patience_counter += 1
 
@@ -272,13 +290,14 @@ def main(cfg: TrainValueConfig):
             ):
                 print(
                     f"Early stopping at step {step}: "
-                    f"best val_mae={best_val_mae:.4f} at step {best_step}"
+                    f"best val_loss={best_val_loss:.4f} at step {best_step}"
                 )
                 stop_training = True
 
             log = {
                 "loss": loss_value,
                 "mae": mae_value,
+                "val_loss": val_loss,
                 "val_mae": val_mae,
                 "lr": scheduler.get_last_lr()[0],
                 "update_s": update_s,
@@ -288,7 +307,8 @@ def main(cfg: TrainValueConfig):
             lr_str = f"{log['lr']:.2e}"
             print(
                 f"[step {step:>6d}] loss={log['loss']:.4f}"
-                f"  mae={log['mae']:.4f}  val_mae={val_mae:.4f}  lr={lr_str}"
+                f"  mae={log['mae']:.4f}  val_loss={val_loss:.4f}"
+                f"  val_mae={val_mae:.4f}  lr={lr_str}"
                 f"  update_s={update_s:.3f}  dataloading_s={dataloading_s:.3f}"
             )
             if cfg.wandb_project:
@@ -335,7 +355,7 @@ def main(cfg: TrainValueConfig):
     save_reward_context(final_dir, reward_context, dataset.num_frames)
     print(f"Training complete. Final checkpoint: {final_dir}")
     if best_step > 0:
-        print(f"Best val_mae={best_val_mae:.4f} at step {best_step} ({best_dir})")
+        print(f"Best val_loss={best_val_loss:.4f} at step {best_step} ({best_dir})")
 
     # Push to hub (prefer best checkpoint if one was saved)
     if cfg.push_to_hub:
