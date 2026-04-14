@@ -43,7 +43,7 @@ class TrainValueConfig:
 
     # Training
     batch_size: int = 32
-    total_steps: int = 10_000
+    total_steps: int = 15_000
 
     # Logging & checkpointing
     log_interval: int = 100

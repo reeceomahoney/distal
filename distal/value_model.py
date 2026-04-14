@@ -53,7 +53,7 @@ class ValueConfig(PreTrainedConfig):
     tokenizer_max_length: int = 64
     freeze_vision_encoder: bool = True
     freeze_language_model: bool = False
-    hl_gauss_sigma: float = 0.0
+    hl_gauss_sigma: float = 0.005
     value_head_depth: int = 1
     value_head_hidden_dim: int = 768
     image_augmentation: bool = True
@@ -62,7 +62,7 @@ class ValueConfig(PreTrainedConfig):
     optimizer_lr: float = 1e-4
     optimizer_betas: tuple[float, float] = (0.9, 0.95)
     optimizer_eps: float = 1e-8
-    optimizer_weight_decay: float = 0.01
+    optimizer_weight_decay: float = 1e-4
     optimizer_grad_clip_norm: float = 1.0
 
     scheduler_warmup_steps: int = 1_000
