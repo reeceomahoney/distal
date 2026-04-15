@@ -35,16 +35,14 @@ import pandas as pd
 import torch
 import torch.nn.functional as F  # noqa: N812
 from lerobot.configs import parser
-from lerobot.configs.types import FeatureType
-from lerobot.datasets.feature_utils import dataset_to_policy_features
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.utils.constants import HF_LEROBOT_HOME
 from torch.utils.data import DataLoader, Dataset
 
 from distal.value_model import (
+    RECAPValueConfig,
     RECAPValueNetwork,
-    RECAPValueNetworkConfig,
-    collect_images,
+    build_value_preprocessor,
 )
 
 CSV_EPISODE_INDEX_COLUMN = "episode_index"
@@ -86,8 +84,8 @@ class ValidationFramePrediction:
 class RECAPValueTrainingConfig:
     """Configuration for RECAP value-network train/val."""
 
-    repo_id: str
-    output_dir: str
+    repo_id: str = "reece-omahoney/libero-10"
+    output_dir: str = "outputs/value"
     labels_csv_path: str | None = None
     root: str | None = None
     revision: str | None = None
@@ -136,10 +134,14 @@ class RECAPValueTrainingConfig:
     # Pretrained VLM initialisation (e.g. "lerobot/pi05_base")
     pretrained_path: str | None = "lerobot/pi05_base"
 
+    # Hub push for trained value network
+    value_repo_id: str | None = "reece-omahoney/value-steps-gemma"
+    push_to_hub: bool = True
+
     # Weights & Biases (optional; set wandb_project to enable)
     wandb_project: str | None = "distal-value"
     wandb_entity: str | None = None
-    wandb_run_name: str | None = None
+    wandb_run_name: str | None = "value-steps-gemma"
 
 
 def _build_warmup_cosine_scheduler(
@@ -640,42 +642,6 @@ class RECAPFrameSupervisionDataset(Dataset):
 _TRAINING_METADATA_KEYS = ("target_bin", "target_value", "success", "frame_index")
 
 
-def _build_preprocessor(
-    dataset: LeRobotDataset,
-    paligemma_variant: str,
-    model_precision: str,
-    device: str,
-):
-    """Build a pi05-compatible preprocessor for the value network.
-
-    This constructs a PI05Config with the dataset's features and uses
-    ``make_pi05_pre_post_processors`` to create the same preprocessing
-    pipeline used by the pi05 policy (normalise state, discretise state,
-    build prompt, tokenise, move to device).
-    """
-    from lerobot.policies.pi05.configuration_pi05 import PI05Config
-    from lerobot.policies.pi05.processor_pi05 import make_pi05_pre_post_processors
-
-    features = dataset_to_policy_features(dataset.meta.features)
-    output_features = {
-        k: f for k, f in features.items() if f.type is FeatureType.ACTION
-    }
-    input_features = {k: f for k, f in features.items() if k not in output_features}
-
-    policy_cfg = PI05Config(
-        input_features=input_features,
-        output_features=output_features,
-        paligemma_variant=paligemma_variant,
-        dtype=model_precision,
-        device=device,
-    )
-    preprocessor, _ = make_pi05_pre_post_processors(
-        config=policy_cfg,
-        dataset_stats=dataset.meta.stats,  # ty: ignore[invalid-argument-type]
-    )
-    return preprocessor
-
-
 def _preprocess_batch(batch: dict, preprocessor) -> dict:
     """Apply the preprocessor while preserving training metadata keys."""
     preserved = {}
@@ -916,9 +882,8 @@ def _run_epoch(
         step_num = step + 1
 
         batch = _preprocess_batch(batch, preprocessor)
-        images = collect_images(batch, model.config.image_size)
 
-        outputs = model(batch, images)
+        outputs = model.compute_outputs(batch)
         value_logits = outputs["value_logits"]
         expected_value = outputs["expected_value"].squeeze(-1)
 
@@ -1136,7 +1101,7 @@ def run_recap_value_train_val(cfg: RECAPValueTrainingConfig) -> None:
         seed=cfg.seed,
     )
 
-    preprocessor = _build_preprocessor(
+    preprocessor = build_value_preprocessor(
         dataset=dataset,
         paligemma_variant=cfg.paligemma_variant,
         model_precision=cfg.model_precision,
@@ -1185,7 +1150,7 @@ def run_recap_value_train_val(cfg: RECAPValueTrainingConfig) -> None:
         )
     model_precision = cast(Literal["float32", "bfloat16"], cfg.model_precision)
 
-    model_config = RECAPValueNetworkConfig(
+    model_config = RECAPValueConfig(
         paligemma_variant=cfg.paligemma_variant,
         precision=model_precision,
         image_size=cfg.image_size,
@@ -1197,7 +1162,10 @@ def run_recap_value_train_val(cfg: RECAPValueTrainingConfig) -> None:
         num_value_bins=cfg.num_value_bins,
         value_head_depth=cfg.value_head_depth,
         dropout=cfg.dropout,
-        pretrained_path=cfg.pretrained_path,
+        vlm_pretrained_path=cfg.pretrained_path,
+        device=str(device),
+        repo_id=cfg.value_repo_id,
+        push_to_hub=cfg.push_to_hub,
     )
     model = RECAPValueNetwork(model_config).to(device)
 
@@ -1530,21 +1498,35 @@ def run_recap_value_train_val(cfg: RECAPValueTrainingConfig) -> None:
 
         _save_json(output_dir / "metrics_history.json", history)
 
-        checkpoint = {
-            "epoch": epoch,
-            "model_state_dict": model.state_dict(),
-            "optimizer_state_dict": optimizer.state_dict(),
-            "model_config": asdict(model_config),
-            "train_config": asdict(cfg),
-            "metrics": epoch_metrics,
-        }
-        torch.save(checkpoint, checkpoints_dir / "last.pt")
-        torch.save(checkpoint, checkpoints_dir / f"epoch_{epoch:04d}.pt")
+        last_dir = checkpoints_dir / "last"
+        last_dir.mkdir(parents=True, exist_ok=True)
+        model.save_pretrained(last_dir)
+        preprocessor.save_pretrained(
+            last_dir, config_filename="policy_preprocessor.json"
+        )
+        _save_json(last_dir / "metrics.json", epoch_metrics)
+
         if epoch_metrics["val_loss"] < best_val_loss:
             best_val_loss = epoch_metrics["val_loss"]
-            torch.save(checkpoint, checkpoints_dir / "best.pt")
+            best_dir = checkpoints_dir / "best"
+            best_dir.mkdir(parents=True, exist_ok=True)
+            model.save_pretrained(best_dir)
+            preprocessor.save_pretrained(
+                best_dir, config_filename="policy_preprocessor.json"
+            )
+            _save_json(best_dir / "metrics.json", epoch_metrics)
 
     logging.info(f"Training complete. Best val loss: {best_val_loss:.5f}")
+
+    if cfg.push_to_hub and cfg.value_repo_id:
+        logging.info(f"Pushing value network to hub: {cfg.value_repo_id}")
+        model.push_to_hub(cfg.value_repo_id)
+        preprocessor.save_pretrained(
+            save_directory=checkpoints_dir / "hub_upload",
+            repo_id=cfg.value_repo_id,
+            push_to_hub=True,
+            config_filename="policy_preprocessor.json",
+        )
 
     if wandb_run is not None:
         wandb_run.finish()

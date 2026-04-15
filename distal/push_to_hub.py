@@ -6,7 +6,7 @@ from pathlib import Path
 
 from lerobot.configs.policies import PreTrainedConfig
 
-from distal.value_model import ValueConfig, ValueFunction  # noqa: F401
+from distal.value_model import RECAPValueNetwork
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
@@ -15,12 +15,23 @@ logging.basicConfig(
 
 def push_value(checkpoint_dir: Path, repo_id: str, private: bool):
     from huggingface_hub import upload_file
+    from lerobot.processor.pipeline import PolicyProcessorPipeline
 
     from distal.rewards import REWARD_CONTEXT_FILENAME
 
-    model = ValueFunction.from_pretrained(str(checkpoint_dir))
+    model = RECAPValueNetwork.from_pretrained(str(checkpoint_dir))
     logging.info("Loaded value model from %s", checkpoint_dir)
     model.push_to_hub(repo_id, private=private)
+
+    preprocessor = PolicyProcessorPipeline.from_pretrained(
+        str(checkpoint_dir), config_filename="policy_preprocessor.json"
+    )
+    preprocessor.save_pretrained(
+        save_directory=checkpoint_dir,
+        repo_id=repo_id,
+        push_to_hub=True,
+        config_filename="policy_preprocessor.json",
+    )
 
     reward_context_path = checkpoint_dir / REWARD_CONTEXT_FILENAME
     if reward_context_path.exists():
@@ -70,7 +81,7 @@ def main():
     policy_config = PreTrainedConfig.from_pretrained(checkpoint_dir)
     logging.info("Detected policy type: %s", policy_config.type)
 
-    if policy_config.type == "value":
+    if policy_config.type == "recap_value":
         push_value(checkpoint_dir, args.repo_id, args.private)
     else:
         push_policy(checkpoint_dir, args.repo_id, args.private)

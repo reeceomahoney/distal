@@ -16,13 +16,17 @@
 
 import logging
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from importlib import import_module
 from typing import Any, Literal
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F  # noqa: N812
+from lerobot.configs.policies import PreTrainedConfig
+from lerobot.configs.types import NormalizationMode
+from lerobot.optim.optimizers import AdamWConfig
+from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.utils.constants import (
     OBS_IMAGES,
     OBS_LANGUAGE_ATTENTION_MASK,
@@ -130,8 +134,9 @@ def _load_get_gemma_config():
 get_gemma_config = _load_get_gemma_config()
 
 
+@PreTrainedConfig.register_subclass("recap_value")
 @dataclass
-class RECAPValueNetworkConfig:
+class RECAPValueConfig(PreTrainedConfig):
     """Configuration for the standalone RECAP value network."""
 
     paligemma_variant: str = "gemma_300m"
@@ -148,14 +153,46 @@ class RECAPValueNetworkConfig:
     num_vlm_layers: int = 18
     value_head_depth: int = 1
     dropout: float = 0.1
-    pretrained_path: str | None = None
+    vlm_pretrained_path: str | None = None
+
+    normalization_mapping: dict[str, NormalizationMode] = field(
+        default_factory=lambda: {
+            "VISUAL": NormalizationMode.IDENTITY,
+            "STATE": NormalizationMode.IDENTITY,
+            "ACTION": NormalizationMode.IDENTITY,
+        }
+    )
+
+    @property
+    def observation_delta_indices(self) -> None:
+        return None
+
+    @property
+    def action_delta_indices(self) -> None:
+        return None
+
+    @property
+    def reward_delta_indices(self) -> None:
+        return None
+
+    def get_optimizer_preset(self) -> AdamWConfig:
+        return AdamWConfig()
+
+    def get_scheduler_preset(self) -> None:
+        return None
+
+    def validate_features(self) -> None:
+        return None
 
 
-class RECAPValueNetwork(nn.Module):
+class RECAPValueNetwork(PreTrainedPolicy):
+    config_class = RECAPValueConfig
+    name = "recap_value"
+    config: RECAPValueConfig
     value_bin_support: Tensor
 
-    def __init__(self, config: RECAPValueNetworkConfig):
-        super().__init__()
+    def __init__(self, config: RECAPValueConfig):
+        super().__init__(config)
         if PaliGemmaForConditionalGeneration is None or CONFIG_MAPPING is None:
             raise ImportError(
                 "transformers is required to instantiate RECAPValueNetwork."
@@ -258,20 +295,48 @@ class RECAPValueNetwork(nn.Module):
         value_head_layers.append(nn.Linear(config.hidden_dim, config.num_value_bins))
         self.value_head = nn.Sequential(*value_head_layers)
 
-        if config.pretrained_path:
-            load_pretrained_vlm_weights(self, config.pretrained_path)
+        if config.vlm_pretrained_path:
+            load_pretrained_vlm_weights(self, config.vlm_pretrained_path)
 
-    def forward(self, batch: dict[str, Any], images: Tensor) -> dict[str, Tensor]:
+    def get_optim_params(self) -> dict:
+        return {"params": [p for p in self.parameters() if p.requires_grad]}
+
+    def reset(self) -> None:
+        pass
+
+    def select_action(self, batch: dict[str, Tensor], **kwargs) -> Tensor:
+        raise NotImplementedError("RECAPValueNetwork does not produce actions.")
+
+    def predict_action_chunk(self, batch: dict[str, Tensor], **kwargs) -> Tensor:
+        raise NotImplementedError("RECAPValueNetwork does not produce actions.")
+
+    def predict_value(self, batch: dict[str, Any]) -> Tensor:
+        """Return expected scalar value V(s) for each item in ``batch``."""
+        outputs = self.compute_outputs(batch)
+        return outputs["expected_value"].squeeze(-1)
+
+    def forward(
+        self, batch: dict[str, Tensor]
+    ) -> tuple[Tensor, dict[str, Tensor] | None]:
+        """Compute cross-entropy loss over value bins.
+
+        Expects ``batch["target_bin"]`` to contain integer bin targets.
+        """
+        outputs = self.compute_outputs(batch)
+        loss = F.cross_entropy(outputs["value_logits"], batch["target_bin"])
+        return loss, outputs
+
+    def compute_outputs(self, batch: dict[str, Any]) -> dict[str, Tensor]:
         """Forward pass returning logits over value bins.
 
         Args:
-            batch: Preprocessed batch with language tokens and attention mask.
-            images: Camera images of shape ``[B, n_cams, C, H, W]``.
+            batch: Preprocessed batch with images, language tokens and mask.
 
         Returns:
             Dictionary with value_logits, value_probs and expected_value.
         """
         device = next(self.parameters()).device
+        images = collect_images(batch, self.config.image_size)
         batch_size, n_cams = images.shape[:2]
 
         # Paligemma SigLIP image encoder
@@ -336,37 +401,33 @@ class RECAPValueNetwork(nn.Module):
         }
 
 
-# Deprecated compatibility shims for legacy scripts (compute_advantage_labels,
-# rollout_value_viz) that targeted the previous ValueFunction API. Kept as
-# stubs so type-checking passes; will raise at runtime until those scripts are
-# ported to RECAPValueNetwork.
-class ValueConfig:
-    pass
+def build_value_preprocessor(
+    dataset: Any,
+    paligemma_variant: str,
+    model_precision: str,
+    device: str,
+) -> Any:
+    """Build a pi05-compatible preprocessor for the value network."""
+    from lerobot.configs.types import FeatureType
+    from lerobot.datasets.feature_utils import dataset_to_policy_features
+    from lerobot.policies.pi05.configuration_pi05 import PI05Config
+    from lerobot.policies.pi05.processor_pi05 import make_pi05_pre_post_processors
 
+    features = dataset_to_policy_features(dataset.meta.features)
+    output_features = {
+        k: f for k, f in features.items() if f.type is FeatureType.ACTION
+    }
+    input_features = {k: f for k, f in features.items() if k not in output_features}
 
-class ValueFunction:
-    config: Any
-
-    @classmethod
-    def from_pretrained(cls, *args: Any, **kwargs: Any) -> "ValueFunction":
-        raise NotImplementedError(
-            "ValueFunction has been replaced by RECAPValueNetwork"
-        )
-
-    def to(self, *args: Any, **kwargs: Any) -> "ValueFunction":
-        return self
-
-    def eval(self) -> "ValueFunction":
-        return self
-
-    def predict_value(self, *args: Any, **kwargs: Any) -> Any:
-        raise NotImplementedError
-
-    def push_to_hub(self, *args: Any, **kwargs: Any) -> Any:
-        raise NotImplementedError
-
-
-def make_value_pre_post_processors(*args: Any, **kwargs: Any) -> Any:
-    raise NotImplementedError(
-        "make_value_pre_post_processors has been replaced by the RECAP pipeline"
+    policy_cfg = PI05Config(
+        input_features=input_features,
+        output_features=output_features,
+        paligemma_variant=paligemma_variant,
+        dtype=model_precision,
+        device=device,
     )
+    preprocessor, _ = make_pi05_pre_post_processors(
+        config=policy_cfg,
+        dataset_stats=dataset.meta.stats,
+    )
+    return preprocessor

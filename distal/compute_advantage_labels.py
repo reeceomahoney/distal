@@ -17,9 +17,8 @@ import draccus
 import numpy as np
 import pandas as pd
 import torch
-from lerobot.configs.policies import PreTrainedConfig
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
-from lerobot.policies.factory import make_pre_post_processors
+from lerobot.processor.pipeline import PolicyProcessorPipeline
 from torch.utils.data import DataLoader
 
 import lerobot_policy_advantage as lerobot_policy_advantage
@@ -27,13 +26,12 @@ from distal.rewards import (
     compute_nstep_advantages,
     load_reward_context,
 )
-from distal.value_model import ValueFunction
+from distal.value_model import RECAPValueNetwork
 
 
 @dataclass
 class ComputeAdvantageLabelsConfig:
-    value_checkpoint: str = "reece-omahoney/value-steps-penalty"
-    policy_checkpoint: str = "reece-omahoney/adv-libero-base-fixed"
+    value_checkpoint: str = "outputs/value/checkpoints/last"
     dataset_repo_id: str = "reece-omahoney/libero-10"
     new_dataset_repo_id: str = "reece-omahoney/libero-10-adv-steps-penalty"
     push_to_hub: bool = True
@@ -46,7 +44,7 @@ class ComputeAdvantageLabelsConfig:
 
 def compute_all_values(
     dataset: LeRobotDataset,
-    value_model: ValueFunction,
+    value_model: RECAPValueNetwork,
     preprocessor,
     batch_size: int = 64,
     num_workers: int = 4,
@@ -130,11 +128,10 @@ def main(cfg: ComputeAdvantageLabelsConfig):
 
     # Load value model & preprocessor
     print("Loading value model...")
-    value_model = ValueFunction.from_pretrained(cfg.value_checkpoint)
+    value_model = RECAPValueNetwork.from_pretrained(cfg.value_checkpoint)
     value_model.to(device).eval()
-    policy_cfg = PreTrainedConfig.from_pretrained(cfg.policy_checkpoint)
-    preprocessor, _ = make_pre_post_processors(
-        policy_cfg, pretrained_path=cfg.policy_checkpoint
+    preprocessor = PolicyProcessorPipeline.from_pretrained(
+        cfg.value_checkpoint, config_filename="policy_preprocessor.json"
     )
 
     # Compute V(s) for all samples
