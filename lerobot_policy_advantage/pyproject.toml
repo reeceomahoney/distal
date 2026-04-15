@@ -3,14 +3,14 @@ name = "lerobot_policy_advantage"
 version = "0.1.0"
 description = "Advantage-conditioned policy plugin for LeRobot"
 requires-python = ">=3.12, <3.13"
-dependencies = [
-  "lerobot[smolvla] @ git+https://github.com/reeceomahoney/lerobot@fix/rollout-return-observations-nested-dict",
-  "distal",
-]
+dependencies = ["lerobot", "distal"]
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+[tool.uv.sources]
+lerobot = { git = "https://github.com/reeceomahoney/lerobot", branch = "fix/rollout-return-observations-nested-dict" }
 
 [tool.hatch.metadata]
 allow-direct-references = true

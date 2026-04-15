@@ -4,9 +4,6 @@ resources:
   cloud: ssh
   accelerators: RTX4090:2
   cpus: 31
-  autostop:
-    idle_minutes: 10
-    down: true
 
 envs:
   HF_TOKEN:
