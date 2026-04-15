@@ -342,7 +342,12 @@ class RECAPValueNetwork(PreTrainedPolicy):
         # Paligemma SigLIP image encoder
         flat_images = images.reshape(batch_size * n_cams, *images.shape[2:]).to(device)
         image_outputs = self.paligemma.model.get_image_features(flat_images)
-        flat_img_emb = image_outputs.pooler_output
+        # transformers < 5.5.4 divides image features by sqrt(hidden_size) inside
+        # get_image_features (removed in PR #44432). pi05 was trained without that
+        # rescale, so multiply it back out to match the language-side scale below.
+        flat_img_emb = image_outputs.pooler_output * math.sqrt(
+            image_outputs.pooler_output.shape[-1]
+        )
         if flat_img_emb.ndim == 2:
             flat_img_emb = flat_img_emb.unsqueeze(1)
         img_token_len = flat_img_emb.shape[1]
