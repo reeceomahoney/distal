@@ -12,6 +12,7 @@ returns when the n-step window extends past the episode boundary.
 import json
 from collections import Counter
 from dataclasses import dataclass
+from pathlib import Path
 
 import draccus
 import numpy as np
@@ -22,10 +23,7 @@ from lerobot.processor.pipeline import PolicyProcessorPipeline
 from torch.utils.data import DataLoader
 
 import lerobot_policy_advantage as lerobot_policy_advantage
-from distal.rewards import (
-    compute_nstep_advantages,
-    load_reward_context,
-)
+from distal.rewards import compute_nstep_advantages
 from distal.value_model import RECAPValueNetwork
 
 
@@ -40,6 +38,92 @@ class ComputeAdvantageLabelsConfig:
     advantage_percentile: float = 0.7
     batch_size: int = 256
     num_workers: int = 16
+    labels_csv_path: str | None = None
+    c_fail: float = 500.0
+    gamma: float = 1.0
+
+
+def resolve_labels_csv(dataset: LeRobotDataset, labels_csv_path: str | None) -> Path:
+    """Find the episode-labels CSV, downloading from HF if needed."""
+    if labels_csv_path is not None:
+        path = Path(labels_csv_path).expanduser()
+        if not path.is_file():
+            raise FileNotFoundError(f"Provided labels_csv_path does not exist: {path}")
+        return path
+
+    default_path = dataset.root / "meta" / "episode_labels.csv"
+    if default_path.is_file():
+        return default_path
+
+    try:
+        from huggingface_hub import hf_hub_download
+
+        hf_hub_download(
+            repo_id=dataset.repo_id,
+            filename="meta/episode_labels.csv",
+            repo_type="dataset",
+            local_dir=str(dataset.root),
+        )
+    except Exception:
+        pass
+
+    if default_path.is_file():
+        return default_path
+
+    raise FileNotFoundError(
+        f"No episode labels CSV found at {default_path}. "
+        "Pass --labels_csv_path explicitly or push meta/episode_labels.csv "
+        "to the HuggingFace dataset."
+    )
+
+
+def compute_rewards_and_returns(
+    dataset: LeRobotDataset,
+    success_by_episode: dict[int, int],
+    c_fail: float,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Compute per-frame normalized rewards and returns matching value training.
+
+    Uses the same reward scheme as train_value: -1 per step, 0 or -c_fail at
+    terminal, normalized per-task by max episode length, clipped to [-1, 0].
+    """
+    num_frames = dataset.num_frames
+    rewards = np.zeros(num_frames, dtype=np.float64)
+    returns = np.zeros(num_frames, dtype=np.float64)
+
+    episode_info: list[tuple[int, int, int, str]] = []
+    for ep_idx in range(dataset.meta.total_episodes):
+        ep_data = dataset.meta.episodes[ep_idx]
+        start = int(ep_data["dataset_from_index"])
+        end = int(ep_data["dataset_to_index"])
+        length = end - start
+
+        if "task_index" in ep_data and dataset.meta.tasks is not None:
+            task = str(dataset.meta.tasks.iloc[int(ep_data["task_index"])].name)
+        elif "tasks" in ep_data and ep_data["tasks"]:
+            tasks = ep_data["tasks"]
+            task = tasks if isinstance(tasks, str) else str(tasks[0])
+        else:
+            raise ValueError(f"Episode {ep_idx} has no task information")
+
+        episode_info.append((start, end, length, task))
+
+    task_max_len: dict[str, int] = {}
+    for _, _, length, task in episode_info:
+        task_max_len[task] = max(task_max_len.get(task, 1), length)
+
+    for ep_idx, (start, end, length, task) in enumerate(episode_info):
+        success = bool(success_by_episode[ep_idx])
+        ep_rewards = np.full(length, -1.0, dtype=np.float64)
+        ep_rewards[-1] = 0.0 if success else -float(c_fail)
+
+        ep_returns = np.flip(np.cumsum(np.flip(ep_rewards)))
+
+        norm = float(task_max_len[task])
+        rewards[start:end] = ep_rewards / norm
+        returns[start:end] = np.clip(ep_returns / norm, -1.0, 0.0)
+
+    return rewards, returns
 
 
 def compute_all_values(
@@ -66,7 +150,7 @@ def compute_all_values(
     all_values: list[float] = []
     total_batches = len(loader)
     for batch_idx, batch in enumerate(loader):
-        if batch_idx % 100 == 0 or batch_idx == total_batches - 1:
+        if batch_idx % 20 == 0 or batch_idx == total_batches - 1:
             print(f"  [values] batch {batch_idx + 1}/{total_batches}", flush=True)
 
         batch = preprocessor(batch)
@@ -149,25 +233,29 @@ def main(cfg: ComputeAdvantageLabelsConfig):
     task_map = {v: k for k, v in dataset.meta.tasks["task_index"].items()}
     tasks = [task_map[i] for i in task_index]
 
+    # Compute rewards and returns from episode labels
+    labels_csv = resolve_labels_csv(dataset, cfg.labels_csv_path)
+    print(f"Using episode labels from: {labels_csv}")
+    labels_df = pd.read_csv(labels_csv)
+    success_by_episode = {
+        int(row["episode_index"]): int(row["success"])
+        for _, row in labels_df.iterrows()
+    }
+
+    rewards, returns = compute_rewards_and_returns(
+        dataset, success_by_episode, cfg.c_fail
+    )
+    print(f"Computed rewards/returns (c_fail={cfg.c_fail}, gamma={cfg.gamma})")
+
     # Compute n-step advantages
     print(f"Computing {cfg.n_step}-step advantages...")
-    reward_context = load_reward_context(
-        cfg.value_checkpoint,
-        dataset=dataset,
-    )
-
-    print("Loaded reward_context.safetensors from checkpoint")
-    print(f"Reward type: {reward_context.reward_type}")
-    print(f"Reward gamma: {reward_context.gamma:.4f}")
-    print(f"Reward norm constant: {reward_context.normalization_constant:.4f}")
-    print(f"Failure penalty: {reward_context.failure_penalty:.4f}")
     advantages = compute_nstep_advantages(
         values,
-        reward_context.rewards,
-        reward_context.returns,
+        rewards,
+        returns,
         episode_index_all,
         cfg.n_step,
-        reward_context.gamma,
+        cfg.gamma,
     )
 
     # Compute per-task thresholds and binarize
