@@ -139,7 +139,7 @@ def main(cfg: EvalDistConfig):
                 task_env_cfg = LiberoEnvConfig(suite_name, fps=10, task_ids=[task_id])
                 task_envs = make_env(task_env_cfg, n_envs=cfg.n_envs)
                 vec_env = task_envs[suite_name][task_id]
-                task_desc = vec_env.call("task_description")[0]  # type: ignore[attr-defined]
+                task_desc = vec_env.call("task_description")[0]  # ty: ignore[unresolved-attribute]
                 print(f"\nTask {task_id + 1}/{n_tasks}: {task_desc}")
 
                 info = lerobot_eval_policy(

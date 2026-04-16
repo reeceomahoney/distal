@@ -7,6 +7,7 @@ conditioning, the deltas will be near zero.
 """
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import cast as typecast
 
 import draccus
@@ -56,7 +57,7 @@ def main(cfg: CheckAdvantageConfig):
     policy_cfg = typecast(
         AdvantageConfig, PreTrainedConfig.from_pretrained(cfg.policy_path)
     )
-    policy_cfg.pretrained_path = cfg.policy_path  # type: ignore[assignment]
+    policy_cfg.pretrained_path = Path(cfg.policy_path)
     policy_cfg.device = str(device)
     policy_cfg.fixed_advantage = False
     policy = AdvantagePolicy(policy_cfg)

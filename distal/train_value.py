@@ -27,6 +27,7 @@ import random
 import time
 from collections.abc import Callable
 from dataclasses import asdict, dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Literal, cast
 
@@ -36,6 +37,7 @@ import torch
 import torch.nn.functional as F  # noqa: N812
 from lerobot.configs import parser
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
+from lerobot.datasets.video_utils import _default_decoder_cache
 from lerobot.utils.constants import HF_LEROBOT_HOME
 from torch.utils.data import DataLoader, Dataset
 
@@ -85,7 +87,6 @@ class RECAPValueTrainingConfig:
     """Configuration for RECAP value-network train/val."""
 
     repo_id: str = "reece-omahoney/libero-10"
-    output_dir: str = "outputs/value"
     labels_csv_path: str | None = None
     root: str | None = None
     revision: str | None = None
@@ -876,6 +877,9 @@ def _run_epoch(
     if training and optimizer is not None:
         optimizer.zero_grad(set_to_none=True)
 
+    # Need this to prevent hanging
+    _default_decoder_cache.clear()
+
     for step, batch in enumerate(loader):
         if max_steps is not None and step >= max_steps:
             break
@@ -1068,7 +1072,7 @@ def run_recap_value_train_val(cfg: RECAPValueTrainingConfig) -> None:
     )
     _set_seed(cfg.seed)
 
-    output_dir = Path(cfg.output_dir)
+    output_dir = Path("outputs/value") / datetime.now().strftime("%Y-%m-%d/%H-%M-%S")
     checkpoints_dir = output_dir / "checkpoints"
     checkpoints_dir.mkdir(parents=True, exist_ok=True)
 
@@ -1336,6 +1340,7 @@ def run_recap_value_train_val(cfg: RECAPValueTrainingConfig) -> None:
             )
 
         if should_plot and plot_subdir is not None and val_plot_loader is not None:
+            logging.info(f"[{trigger_tag}] Running plot pass ...")
             collected_predictions: dict[int, list[ValidationFramePrediction]] = {}
             try:
                 _run_epoch(
@@ -1521,12 +1526,7 @@ def run_recap_value_train_val(cfg: RECAPValueTrainingConfig) -> None:
     if cfg.push_to_hub and cfg.value_repo_id:
         logging.info(f"Pushing value network to hub: {cfg.value_repo_id}")
         model.push_to_hub(cfg.value_repo_id)
-        preprocessor.save_pretrained(
-            save_directory=checkpoints_dir / "hub_upload",
-            repo_id=cfg.value_repo_id,
-            push_to_hub=True,
-            config_filename="policy_preprocessor.json",
-        )
+        preprocessor.push_to_hub(cfg.value_repo_id)
 
     if wandb_run is not None:
         wandb_run.finish()

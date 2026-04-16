@@ -181,7 +181,7 @@ def main(cfg: RolloutValueVizConfig):
     # Rollout
     all_results = []
     for task_id, vec_env in envs[cfg.suite_name].items():
-        task_text = vec_env.call("task_description")[0]  # type: ignore[attr-defined]
+        task_text = vec_env.call("task_description")[0]  # ty: ignore[unresolved-attribute]
         print(f"\n=== Task {task_id}: {task_text} ===")
 
         results = rollout_with_values(
