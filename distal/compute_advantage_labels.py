@@ -31,9 +31,9 @@ from distal.value_model import RECAPValueNetwork
 
 @dataclass
 class ComputeAdvantageLabelsConfig:
-    value_checkpoint: str = "outputs/value/checkpoints/last"
+    value_checkpoint: str = "reece-omahoney/value-steps-paligemma"
     dataset_repo_id: str = "reece-omahoney/libero-10"
-    new_dataset_repo_id: str = "reece-omahoney/libero-10-adv-steps-penalty"
+    new_dataset_repo_id: str = "reece-omahoney/libero-10-adv-steps-paligemma"
     push_to_hub: bool = True
     device: str = "cuda"
     n_step: int = 50

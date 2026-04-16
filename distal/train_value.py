@@ -136,13 +136,13 @@ class RECAPValueTrainingConfig:
     pretrained_path: str | None = "lerobot/pi05_base"
 
     # Hub push for trained value network
-    value_repo_id: str | None = "reece-omahoney/value-steps-gemma"
+    value_repo_id: str | None = "reece-omahoney/value-steps-paligemma"
     push_to_hub: bool = True
 
     # Weights & Biases (optional; set wandb_project to enable)
     wandb_project: str | None = "distal-value"
     wandb_entity: str | None = None
-    wandb_run_name: str | None = "value-steps-gemma"
+    wandb_run_name: str | None = "value-steps-paligemma"
 
 
 def _build_warmup_cosine_scheduler(
