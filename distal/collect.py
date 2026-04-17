@@ -148,7 +148,7 @@ def main(cfg: EvalDistConfig):
         with torch.no_grad(), amp_ctx:
             for task_id in range(n_tasks):
                 task_env_cfg = LiberoEnvConfig(suite_name, fps=10, task_ids=[task_id])
-                task_envs = make_env(task_env_cfg, n_envs=n_envs)
+                task_envs = make_env(task_env_cfg, n_envs=n_envs, use_async_envs=True)
                 vec_env = task_envs[suite_name][task_id]
                 task_desc = vec_env.call("task_description")[0]  # ty: ignore[unresolved-attribute]
                 print(f"\nTask {task_id + 1}/{n_tasks}: {task_desc}")
