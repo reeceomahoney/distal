@@ -109,6 +109,15 @@ class RECAPValueTrainingConfig:
     c_fail: float = 500.0
     num_value_bins: int = 50
 
+    # Per-step reward source: "steps" = fixed -1, "maha" = normalized
+    # Mahalanobis distance of each frame's VLM embedding from the base
+    # training distribution (see distal/maha_reward.py).
+    reward_mode: Literal["steps", "maha"] = "steps"
+    base_policy: str = "reece-omahoney/adv-libero-base-fixed"
+    maha_stats_path: str = "reece-omahoney/maha-stats"
+    maha_embed_batch_size: int = 32
+    maha_embed_num_workers: int = 4
+
     # Input processing
     tokenizer_max_length: int = 200
     image_size: int = 224
@@ -286,6 +295,7 @@ def _build_frame_targets(
     success_by_episode: dict[int, int],
     c_fail: float,
     num_value_bins: int,
+    step_rewards: dict[int, float] | None = None,
 ) -> list[FrameTarget]:
     episode_infos = _build_episode_infos(dataset)
     task_max_episode_len = _compute_task_max_episode_len(episode_infos)
@@ -306,7 +316,16 @@ def _build_frame_targets(
     frame_targets: list[FrameTarget] = []
     for ep_idx, info in episode_infos.items():
         success = bool(success_by_episode[ep_idx])
-        rewards = torch.full((info.length,), -1.0, dtype=torch.float32)
+        if step_rewards is None:
+            rewards = torch.full((info.length,), -1.0, dtype=torch.float32)
+        else:
+            rewards = torch.tensor(
+                [
+                    step_rewards[abs_idx]
+                    for abs_idx in range(info.start_index, info.end_index)
+                ],
+                dtype=torch.float32,
+            )
         rewards[-1] = 0.0 if success else -float(c_fail)
 
         returns = torch.flip(
@@ -1026,11 +1045,29 @@ def run_recap_value_train_val(cfg: RECAPValueTrainingConfig) -> None:
         f"Loaded success labels for {len(success_by_episode)} episodes "
         "from the dataset's 'success' column."
     )
+
+    step_rewards: dict[int, float] | None = None
+    if cfg.reward_mode == "maha":
+        from distal.maha_reward import compute_maha_rewards
+
+        logging.info(
+            f"Computing Mahalanobis-distance rewards using {cfg.base_policy}..."
+        )
+        step_rewards = compute_maha_rewards(
+            dataset=dataset,
+            policy_path=cfg.base_policy,
+            stats_path=cfg.maha_stats_path,
+            device=device,
+            batch_size=cfg.maha_embed_batch_size,
+            num_workers=cfg.maha_embed_num_workers,
+        )
+
     frame_targets = _build_frame_targets(
         dataset=dataset,
         success_by_episode=success_by_episode,
         c_fail=cfg.c_fail,
         num_value_bins=cfg.num_value_bins,
+        step_rewards=step_rewards,
     )
     train_targets, val_targets = _split_train_val_targets(
         frame_targets=frame_targets,

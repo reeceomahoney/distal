@@ -111,7 +111,7 @@ def fit_gaussian_from_dataset(
 
 @dataclass
 class MahaStatsConfig:
-    policy_path: str = "reece-omahoney/adv-libero-base"
+    policy_path: str = "reece-omahoney/adv-libero-base-fixed"
     dataset_repo_id: str = "lerobot/libero"
     hub_repo_id: str = "reece-omahoney/maha-stats"
     output_path: str = "outputs/maha/stats.safetensors"
