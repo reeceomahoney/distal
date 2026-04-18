@@ -106,6 +106,10 @@ class RECAPValueTrainingConfig:
     val_plot_num_frames: int = 8
     val_plot_every_n_epochs: int = 1
 
+    # Early stopping (set patience to None to disable).
+    early_stopping_patience: int | None = 20
+    early_stopping_min_delta: float = 0.005
+
     # Value target construction
     c_fail: float = 500.0
     num_value_bins: int = 50
@@ -144,7 +148,11 @@ class RECAPValueTrainingConfig:
     # Weights & Biases (optional; set wandb_project to enable)
     wandb_project: str | None = "distal-value"
     wandb_entity: str | None = None
-    wandb_run_name: str | None = "value-steps-pi05-paligemma"
+    wandb_run_name: str | None = "value-maha-pi05-paligemma"
+
+
+class EarlyStopSignal(Exception):
+    """Internal signal raised mid-epoch to halt training when patience is exhausted."""
 
 
 def _build_warmup_cosine_scheduler(
@@ -1179,6 +1187,8 @@ def run_recap_value_train_val(cfg: RECAPValueTrainingConfig) -> None:
     )
 
     best_val_loss = float("inf")
+    patience_counter = 0
+    should_stop = False
     history: list[dict] = []
     plot_episode_ids = _select_validation_plot_episode_ids(
         frame_targets=val_targets,
@@ -1234,6 +1244,55 @@ def run_recap_value_train_val(cfg: RECAPValueTrainingConfig) -> None:
             "plot_every_n_train_steps is set but val_plot_num_episodes <= 0, "
             "so step-based plotting is disabled."
         )
+
+    def _save_checkpoint_and_check_early_stop(
+        val_metrics: dict[str, float],
+        trigger_tag: str,
+        saved_metrics: dict | None = None,
+    ) -> None:
+        nonlocal best_val_loss, patience_counter, should_stop
+        metrics_to_save = saved_metrics if saved_metrics is not None else val_metrics
+
+        last_dir = checkpoints_dir / "last"
+        last_dir.mkdir(parents=True, exist_ok=True)
+        model.save_pretrained(last_dir)
+        preprocessor.save_pretrained(
+            last_dir, config_filename="policy_preprocessor.json"
+        )
+        _save_json(last_dir / "metrics.json", metrics_to_save)
+
+        val_loss = val_metrics.get("loss", float("nan"))
+        if math.isnan(val_loss):
+            return
+
+        if best_val_loss - val_loss > cfg.early_stopping_min_delta:
+            best_val_loss = val_loss
+            patience_counter = 0
+            best_dir = checkpoints_dir / "best"
+            best_dir.mkdir(parents=True, exist_ok=True)
+            model.save_pretrained(best_dir)
+            preprocessor.save_pretrained(
+                best_dir, config_filename="policy_preprocessor.json"
+            )
+            _save_json(best_dir / "metrics.json", metrics_to_save)
+            logging.info(
+                f"[{trigger_tag}] New best val_loss={val_loss:.5f}; "
+                "saved best checkpoint."
+            )
+        else:
+            patience_counter += 1
+            if cfg.early_stopping_patience is not None:
+                logging.info(
+                    f"[{trigger_tag}] No val_loss improvement "
+                    f"({val_loss:.5f} vs best {best_val_loss:.5f}); "
+                    f"patience {patience_counter}/{cfg.early_stopping_patience}"
+                )
+                if patience_counter >= cfg.early_stopping_patience:
+                    should_stop = True
+                    logging.info(
+                        f"[{trigger_tag}] Early stopping triggered after "
+                        f"{patience_counter} validations without improvement."
+                    )
 
     def _run_validation_and_maybe_plot(
         *,
@@ -1408,7 +1467,7 @@ def run_recap_value_train_val(cfg: RECAPValueTrainingConfig) -> None:
                     f"Epoch {epoch}/{cfg.epochs} step-validate "
                     f"(global_step={global_train_step}, epoch_step={step_num})"
                 )
-                _run_validation_and_maybe_plot(
+                step_val_metrics = _run_validation_and_maybe_plot(
                     epoch_index=epoch,
                     trigger_tag=trigger,
                     max_steps=step_val_max_steps,
@@ -1417,26 +1476,46 @@ def run_recap_value_train_val(cfg: RECAPValueTrainingConfig) -> None:
                     else None,
                     loader=step_val_loader,
                 )
+                _save_checkpoint_and_check_early_stop(
+                    val_metrics=step_val_metrics,
+                    trigger_tag=trigger,
+                    saved_metrics={
+                        "epoch": epoch,
+                        "global_step": global_train_step,
+                        "epoch_step": step_num,
+                        "val_loss": step_val_metrics["loss"],
+                        "val_bin_acc": step_val_metrics["bin_acc"],
+                        "val_value_mae": step_val_metrics["value_mae"],
+                    },
+                )
+                if should_stop:
+                    raise EarlyStopSignal()
 
             on_train_step_end = _on_train_step_end
 
-        train_metrics = _run_epoch(
-            model=model,
-            loader=train_loader,
-            preprocessor=preprocessor,
-            device=device,
-            optimizer=optimizer,
-            max_grad_norm=cfg.max_grad_norm,
-            epoch_index=epoch,
-            total_epochs=cfg.epochs,
-            max_steps=cfg.max_train_steps_per_epoch,
-            log_every_n_steps=cfg.log_every_n_steps,
-            on_train_step_end=on_train_step_end,
-            wandb_run=wandb_run,
-            global_step_offset=global_train_step,
-            scheduler=scheduler,
-            gradient_accumulation_steps=cfg.gradient_accumulation_steps,
-        )
+        try:
+            train_metrics = _run_epoch(
+                model=model,
+                loader=train_loader,
+                preprocessor=preprocessor,
+                device=device,
+                optimizer=optimizer,
+                max_grad_norm=cfg.max_grad_norm,
+                epoch_index=epoch,
+                total_epochs=cfg.epochs,
+                max_steps=cfg.max_train_steps_per_epoch,
+                log_every_n_steps=cfg.log_every_n_steps,
+                on_train_step_end=on_train_step_end,
+                wandb_run=wandb_run,
+                global_step_offset=global_train_step,
+                scheduler=scheduler,
+                gradient_accumulation_steps=cfg.gradient_accumulation_steps,
+            )
+        except EarlyStopSignal:
+            logging.info(
+                f"[Epoch {epoch}/{cfg.epochs}] Early stopping triggered mid-epoch."
+            )
+            break
         should_plot_validation = (
             cfg.val_plot_num_episodes > 0
             and cfg.val_plot_every_n_epochs > 0
@@ -1479,23 +1558,17 @@ def run_recap_value_train_val(cfg: RECAPValueTrainingConfig) -> None:
 
         _save_json(output_dir / "metrics_history.json", history)
 
-        last_dir = checkpoints_dir / "last"
-        last_dir.mkdir(parents=True, exist_ok=True)
-        model.save_pretrained(last_dir)
-        preprocessor.save_pretrained(
-            last_dir, config_filename="policy_preprocessor.json"
+        _save_checkpoint_and_check_early_stop(
+            val_metrics={
+                "loss": epoch_metrics["val_loss"],
+                "bin_acc": epoch_metrics["val_bin_acc"],
+                "value_mae": epoch_metrics["val_value_mae"],
+            },
+            trigger_tag=f"Epoch {epoch}/{cfg.epochs} epoch-end",
+            saved_metrics=epoch_metrics,
         )
-        _save_json(last_dir / "metrics.json", epoch_metrics)
-
-        if epoch_metrics["val_loss"] < best_val_loss:
-            best_val_loss = epoch_metrics["val_loss"]
-            best_dir = checkpoints_dir / "best"
-            best_dir.mkdir(parents=True, exist_ok=True)
-            model.save_pretrained(best_dir)
-            preprocessor.save_pretrained(
-                best_dir, config_filename="policy_preprocessor.json"
-            )
-            _save_json(best_dir / "metrics.json", epoch_metrics)
+        if should_stop:
+            break
 
     logging.info(f"Training complete. Best val loss: {best_val_loss:.5f}")
 
