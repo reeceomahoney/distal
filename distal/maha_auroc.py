@@ -1,7 +1,7 @@
 """Evaluate Mahalanobis distance as a failure predictor via AUROC.
 
 Loads pre-computed Mahalanobis stats, embeds dataset frames, computes
-per-frame distances, aggregates per episode (max), and reports AUROC
+per-frame distances, aggregates per episode (mean), and reports AUROC
 against episode success labels.
 """
 
@@ -31,7 +31,7 @@ from distal.embedding import embed_prefix_pooled
 
 @dataclass
 class MahaAurocConfig:
-    policy_path: str = "reece-omahoney/adv-libero-base"
+    policy_path: str = "reece-omahoney/adv-libero-base-fixed"
     dataset_repo_id: str = "reece-omahoney/libero-10"
     maha_stats_repo_id: str = "reece-omahoney/maha-stats"
     num_episodes: int = 50
@@ -120,16 +120,16 @@ def main(cfg: MahaAurocConfig):
     selected_episode_index = episode_index[frame_indices]
     selected_success = success[frame_indices]
 
-    # Aggregate per episode: max distance and success label
-    ep_max_dist = {}
+    # Aggregate per episode: mean distance and success label
+    ep_mean_dist = {}
     ep_success = {}
     for ep in selected_episodes:
         mask = selected_episode_index == ep
-        ep_max_dist[ep] = distances[mask].max()
+        ep_mean_dist[ep] = distances[mask].mean()
         ep_success[ep] = bool(selected_success[mask][0])
 
     episodes = sorted(selected_episodes)
-    scores = np.array([ep_max_dist[ep] for ep in episodes])
+    scores = np.array([ep_mean_dist[ep] for ep in episodes])
     labels = np.array([not ep_success[ep] for ep in episodes])  # failure = positive
 
     n_fail = labels.sum()
@@ -137,15 +137,15 @@ def main(cfg: MahaAurocConfig):
     print(f"\nEpisodes: {len(labels)} ({n_success} success, {n_fail} failure)")
     succ = scores[~labels]
     fail = scores[labels]
-    print(f"Max Maha dist — success: {succ.mean():.2f} ± {succ.std():.2f}")
-    print(f"Max Maha dist — failure: {fail.mean():.2f} ± {fail.std():.2f}")
+    print(f"Mean Maha dist — success: {succ.mean():.2f} ± {succ.std():.2f}")
+    print(f"Mean Maha dist — failure: {fail.mean():.2f} ± {fail.std():.2f}")
 
     if n_fail == 0 or n_success == 0:
         print("Cannot compute AUROC: only one class present.")
         return
 
     auroc = roc_auc_score(labels, scores)
-    print(f"\nAUROC (max Maha → failure): {auroc:.4f}")
+    print(f"\nAUROC (mean Maha → failure): {auroc:.4f}")
 
 
 if __name__ == "__main__":
