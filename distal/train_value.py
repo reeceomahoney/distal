@@ -85,12 +85,12 @@ class RECAPValueTrainingConfig:
     episodes: list[int] | None = None
 
     epochs: int = 2
-    batch_size: int = 16
+    batch_size: int = 64
     gradient_accumulation_steps: int = 1
     num_workers: int = 4
-    learning_rate: float = 1e-4
+    learning_rate: float = 2e-4
     weight_decay: float = 1e-4
-    warmup_ratio: float = 0.05
+    warmup_steps: int = 500
     max_grad_norm: float = 1.0
     val_split_ratio: float = 0.1
     seed: int = 42
@@ -140,10 +140,10 @@ class RECAPValueTrainingConfig:
 def _build_warmup_cosine_scheduler(
     optimizer: torch.optim.Optimizer,
     total_steps: int,
-    warmup_ratio: float,
+    warmup_steps: int,
 ) -> torch.optim.lr_scheduler.LambdaLR:
     """Linear warmup followed by cosine decay to 0."""
-    warmup_steps = max(1, int(total_steps * warmup_ratio))
+    warmup_steps = max(1, min(warmup_steps, total_steps))
 
     def lr_lambda(current_step: int) -> float:
         if current_step < warmup_steps:
@@ -1121,11 +1121,11 @@ def run_recap_value_train_val(cfg: RECAPValueTrainingConfig) -> None:
     scheduler = _build_warmup_cosine_scheduler(
         optimizer,
         total_steps=total_optimizer_steps,
-        warmup_ratio=cfg.warmup_ratio,
+        warmup_steps=cfg.warmup_steps,
     )
     logging.info(
         "Using warmup+cosine schedule: "
-        f"{int(total_optimizer_steps * cfg.warmup_ratio)} warmup steps / "
+        f"{min(cfg.warmup_steps, total_optimizer_steps)} warmup steps / "
         f"{total_optimizer_steps} total optimizer steps "
         f"(grad_accum={grad_accum}), peak lr={cfg.learning_rate}"
     )
