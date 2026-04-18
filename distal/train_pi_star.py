@@ -73,17 +73,19 @@ def _log_memory(label: str) -> None:
 class RECAPPiStarTrainingConfig:
     """Configuration for RECAP PiStar06 advantage-conditioned Pi0.5 policy training."""
 
-    repo_id: str
+    repo_id: str = "reece-omahoney/pi05-libero-10"
     value_network_checkpoint: str = ""
-    value_network_checkpoint_filename: str = "checkpoints/epoch_0001.pt"
-    value_network_pretrained_path: str | None = None
+    value_network_checkpoint_filename: str = ""
+    value_network_pretrained_path: str | None = (
+        "reece-omahoney/value-steps-pi05-paligemma"
+    )
     root: str | None = None
     revision: str | None = None
     episodes: list[int] | None = None
 
     epochs: int = 5
-    batch_size: int = 8
-    num_workers: int = 0
+    batch_size: int = 16
+    num_workers: int = 4
     learning_rate: float = 1e-4
     weight_decay: float = 1e-4
     max_grad_norm: float = 1.0
@@ -118,7 +120,7 @@ class RECAPPiStarTrainingConfig:
     paligemma_variant: str = "gemma_2b"
     action_expert_variant: str = "gemma_300m"
     num_expert_layers: int = 0
-    pretrained_path: str = "lerobot/pi05_libero_base"
+    pretrained_path: str = "lerobot/pi05-libero"
     model_precision: str = "bfloat16"
     freeze_vision_encoder: bool = True
     freeze_backbone: bool = True
@@ -143,16 +145,19 @@ class RECAPPiStarTrainingConfig:
         )
     )
     eval: EvalConfig = field(
-        default_factory=lambda: EvalConfig(n_episodes=20, batch_size=0)
+        default_factory=lambda: EvalConfig(n_episodes=20, batch_size=10)
     )
-    eval_freq_steps: int = 0
     use_async_envs: bool = True
     max_parallel_tasks: int = 1
 
+    # Hub push for trained PiStar06 policy
+    pi_star_repo_id: str | None = "reece-omahoney/pistar06-libero-steps"
+    push_to_hub: bool = True
+
     # Weights & Biases (optional; set wandb_project to enable)
-    wandb_project: str | None = None
+    wandb_project: str | None = "distal"
     wandb_entity: str | None = None
-    wandb_run_name: str | None = None
+    wandb_run_name: str | None = "pistar06-libero-steps"
 
 
 def _init_wandb(cfg: RECAPPiStarTrainingConfig):
@@ -1139,7 +1144,7 @@ def run_recap_pistar_train_val(cfg: RECAPPiStarTrainingConfig) -> None:
     eval_env = None
     env_preprocessor = None
     env_postprocessor = None
-    if cfg.env is not None and cfg.eval_freq_steps > 0:
+    if cfg.env is not None:
         logging.info("Creating sim eval env")
         eval_env = make_env(
             cfg.env,
@@ -1338,30 +1343,6 @@ def run_recap_pistar_train_val(cfg: RECAPPiStarTrainingConfig) -> None:
                 policy.train()
                 _restore_freeze_state(policy, cfg)
 
-            # Step-based sim eval
-            if (
-                eval_env is not None
-                and cfg.eval_freq_steps > 0
-                and global_train_step % cfg.eval_freq_steps == 0
-            ):
-                eval_metrics = _run_sim_eval(
-                    policy=policy,
-                    eval_env=eval_env,
-                    env_preprocessor=env_preprocessor,
-                    env_postprocessor=env_postprocessor,
-                    preprocessor=preprocessor,
-                    postprocessor=postprocessor,
-                    cfg=cfg,
-                    step=global_train_step,
-                    output_dir=output_dir,
-                    wandb_run=wandb_run,
-                )
-                wandb_step_metrics.update(
-                    {f"eval/{k}": v for k, v in eval_metrics.items()}
-                )
-                policy.train()
-                _restore_freeze_state(policy, cfg)
-
             if wandb_run is not None and wandb_step_metrics:
                 wandb_run.log(wandb_step_metrics, step=global_train_step)
 
@@ -1424,11 +1405,29 @@ def run_recap_pistar_train_val(cfg: RECAPPiStarTrainingConfig) -> None:
 
         _log_val_metrics(f"Epoch {epoch}/{cfg.epochs} epoch-end", val_metrics)
 
+        eval_metrics: dict[str, float] = {}
+        if eval_env is not None:
+            eval_metrics = _run_sim_eval(
+                policy=policy,
+                eval_env=eval_env,
+                env_preprocessor=env_preprocessor,
+                env_postprocessor=env_postprocessor,
+                preprocessor=preprocessor,
+                postprocessor=postprocessor,
+                cfg=cfg,
+                step=global_train_step,
+                output_dir=output_dir,
+                wandb_run=wandb_run,
+            )
+            policy.train()
+            _restore_freeze_state(policy, cfg)
+
         epoch_metrics = {
             "epoch": epoch,
             "train_loss": train_loss,
             "lr": optimizer.param_groups[0]["lr"],
             **val_metrics,
+            **{f"eval_{k}": v for k, v in eval_metrics.items()},
         }
         history.append(epoch_metrics)
 
@@ -1477,6 +1476,12 @@ def run_recap_pistar_train_val(cfg: RECAPPiStarTrainingConfig) -> None:
     pretrained_dir.mkdir(parents=True, exist_ok=True)
     policy.save_pretrained(pretrained_dir)
     logging.info(f"Saved pretrained model to {pretrained_dir}")
+
+    if cfg.push_to_hub and cfg.pi_star_repo_id:
+        logging.info(f"Pushing PiStar06 policy to hub: {cfg.pi_star_repo_id}")
+        policy.push_to_hub(cfg.pi_star_repo_id)
+        preprocessor.push_to_hub(cfg.pi_star_repo_id)
+        postprocessor.push_to_hub(cfg.pi_star_repo_id)
 
     if wandb_run is not None:
         wandb_run.finish()
