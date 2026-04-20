@@ -64,8 +64,13 @@ def _embed_prefix_pi05(policy: PI05Policy, batch: dict):
     prefix_att_2d_masks = make_att_2d_masks(prefix_pad_masks, prefix_att_masks)
     prefix_position_ids = torch.cumsum(prefix_pad_masks, dim=1) - 1
 
+    q_dtype = model.paligemma_with_expert.paligemma.model.language_model.layers[
+        0
+    ].self_attn.q_proj.weight.dtype
+    prefix_embs = prefix_embs.to(dtype=q_dtype)
+
     prefix_att_2d_masks_4d = model._prepare_attention_masks_4d(prefix_att_2d_masks)
-    prefix_att_2d_masks_4d = prefix_att_2d_masks_4d.to(dtype=prefix_embs.dtype)
+    prefix_att_2d_masks_4d = prefix_att_2d_masks_4d.to(dtype=q_dtype)
 
     (prefix_out, _), _ = model.paligemma_with_expert.forward(
         attention_mask=prefix_att_2d_masks_4d,

@@ -138,10 +138,7 @@ class RECAPPiStarTrainingConfig:
     # Sim eval (defaults mirror configs/eval.yaml)
     env: EnvConfig | None = field(
         default_factory=lambda: LiberoEnv(
-            task="libero_10",
-            fps=20,
-            observation_height=256,
-            observation_width=256,
+            task="libero_10", fps=20, observation_height=256, observation_width=256
         )
     )
     eval: EvalConfig = field(
