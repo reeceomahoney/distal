@@ -117,11 +117,13 @@ class RECAPValueTrainingConfig:
     # Per-step reward source: "steps" = fixed -1, "maha" = normalized
     # Mahalanobis distance of each frame's VLM embedding from the base
     # training distribution (see distal/maha_reward.py).
-    reward_mode: Literal["steps", "maha"] = "steps"
-    base_policy: str = "reece-omahoney/adv-libero-base-fixed"
-    maha_stats_path: str = "reece-omahoney/maha-stats"
+    reward_mode: Literal["steps", "maha"] = "maha"
+    base_policy: str = "lerobot/pi05-libero"
+    maha_stats_path: str = "reece-omahoney/pi05-maha-stats"
     maha_embed_batch_size: int = 32
     maha_embed_num_workers: int = 4
+    # Upload computed maha rewards to the dataset repo for reuse on later runs.
+    cache_maha_rewards: bool = True
 
     # Input processing
     tokenizer_max_length: int = 200
@@ -139,10 +141,10 @@ class RECAPValueTrainingConfig:
     dropout: float = 0.1
 
     # Pretrained VLM initialisation (e.g. "lerobot/pi05_base")
-    pretrained_path: str | None = "lerobot/pi05_base"
+    pretrained_path: str | None = "lerobot/pi05-libero"
 
     # Hub push for trained value network
-    value_repo_id: str | None = "reece-omahoney/value-steps-pi05-paligemma"
+    value_repo_id: str | None = "reece-omahoney/value-maha-pi05-paligemma"
     push_to_hub: bool = True
 
     # Weights & Biases (optional; set wandb_project to enable)
@@ -1062,18 +1064,20 @@ def run_recap_value_train_val(cfg: RECAPValueTrainingConfig) -> None:
 
     step_rewards: dict[int, float] | None = None
     if cfg.reward_mode == "maha":
-        from distal.maha_reward import compute_maha_rewards
+        from distal.maha_reward import load_or_compute_maha_rewards
 
         logging.info(
-            f"Computing Mahalanobis-distance rewards using {cfg.base_policy}..."
+            f"Loading or computing Mahalanobis-distance rewards using "
+            f"{cfg.base_policy} (dataset cache: {dataset.repo_id})..."
         )
-        step_rewards = compute_maha_rewards(
+        step_rewards = load_or_compute_maha_rewards(
             dataset=dataset,
             policy_path=cfg.base_policy,
             stats_path=cfg.maha_stats_path,
             device=device,
             batch_size=cfg.maha_embed_batch_size,
             num_workers=cfg.maha_embed_num_workers,
+            cache_upload=cfg.cache_maha_rewards,
         )
 
     frame_targets = _build_frame_targets(

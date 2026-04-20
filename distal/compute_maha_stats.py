@@ -111,13 +111,13 @@ def fit_gaussian_from_dataset(
 
 @dataclass
 class MahaStatsConfig:
-    policy_path: str = "reece-omahoney/adv-libero-base-fixed"
+    policy_path: str = "lerobot/pi05-libero"
     dataset_repo_id: str = "lerobot/libero"
-    hub_repo_id: str = "reece-omahoney/maha-stats"
+    hub_repo_id: str = "reece-omahoney/pi05-maha-stats"
     output_path: str = "outputs/maha/stats.safetensors"
     device: str = "cuda"
-    batch_size: int = 32
-    num_workers: int = 4
+    batch_size: int = 512
+    num_workers: int = 32
 
 
 @draccus.wrap()

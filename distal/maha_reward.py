@@ -9,19 +9,23 @@ they can be used in place of the fixed ``-1`` per-step reward.
 """
 
 import logging
+import tempfile
 from pathlib import Path
 
 import numpy as np
 import torch
-from huggingface_hub import hf_hub_download
+from huggingface_hub import HfApi, hf_hub_download
+from huggingface_hub.errors import EntryNotFoundError, RepositoryNotFoundError
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.policies.factory import make_policy, make_pre_post_processors
 from lerobot.policies.pi05.modeling_pi05 import PI05Policy
 from lerobot.policies.smolvla.modeling_smolvla import SmolVLAPolicy
-from safetensors.numpy import load_file
+from safetensors.numpy import load_file, save_file
 
 from distal.compute_maha_stats import compute_maha_distances
+
+MAHA_REWARDS_CACHE_FILENAME = "maha_rewards.safetensors"
 
 
 def load_maha_stats(stats_path: str) -> tuple[np.ndarray, np.ndarray]:
@@ -107,4 +111,102 @@ def compute_maha_rewards(
     for rel_idx in range(n):
         abs_index = int(dataset.hf_dataset[rel_idx]["index"])
         rewards[abs_index] = float(normalized[rel_idx])
+    return rewards
+
+
+def _dataset_frame_indices(dataset: LeRobotDataset) -> list[int]:
+    return [int(dataset.hf_dataset[i]["index"]) for i in range(len(dataset.hf_dataset))]
+
+
+def _try_load_cached_rewards(
+    dataset_repo_id: str, revision: str | None
+) -> dict[int, float] | None:
+    try:
+        local_path = hf_hub_download(
+            repo_id=dataset_repo_id,
+            filename=MAHA_REWARDS_CACHE_FILENAME,
+            repo_type="dataset",
+            revision=revision,
+        )
+    except (EntryNotFoundError, RepositoryNotFoundError):
+        return None
+    tensors = load_file(local_path)
+    indices = tensors["indices"]
+    rewards = tensors["rewards"]
+    return {int(i): float(r) for i, r in zip(indices, rewards)}
+
+
+def _upload_cached_rewards(dataset_repo_id: str, rewards: dict[int, float]) -> None:
+    indices_arr = np.array(sorted(rewards.keys()), dtype=np.int64)
+    rewards_arr = np.array([rewards[int(i)] for i in indices_arr], dtype=np.float32)
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        tmp_path = Path(tmp_dir) / MAHA_REWARDS_CACHE_FILENAME
+        save_file({"indices": indices_arr, "rewards": rewards_arr}, str(tmp_path))
+        api = HfApi()
+        api.upload_file(
+            path_or_fileobj=str(tmp_path),
+            path_in_repo=MAHA_REWARDS_CACHE_FILENAME,
+            repo_id=dataset_repo_id,
+            repo_type="dataset",
+        )
+    logging.info(
+        f"Uploaded maha rewards cache to {dataset_repo_id}/"
+        f"{MAHA_REWARDS_CACHE_FILENAME} ({len(rewards)} frames)"
+    )
+
+
+def load_or_compute_maha_rewards(
+    dataset: LeRobotDataset,
+    policy_path: str,
+    stats_path: str,
+    device: torch.device,
+    batch_size: int,
+    num_workers: int,
+    cache_upload: bool = True,
+) -> dict[int, float]:
+    """Return maha rewards for ``dataset``, using the dataset-repo cache if available.
+
+    Looks for ``maha_rewards.safetensors`` in the dataset repo; if all required
+    absolute frame indices are covered, returns the cached values. Otherwise
+    recomputes and (optionally) uploads the cache.
+    """
+    needed_indices = _dataset_frame_indices(dataset)
+    needed_set = set(needed_indices)
+
+    cached = _try_load_cached_rewards(dataset.repo_id, dataset.revision)
+    if cached is not None:
+        missing = needed_set - cached.keys()
+        if not missing:
+            logging.info(
+                f"Loaded cached maha rewards from {dataset.repo_id}/"
+                f"{MAHA_REWARDS_CACHE_FILENAME} ({len(needed_indices)} frames)"
+            )
+            return {idx: cached[idx] for idx in needed_indices}
+        logging.info(
+            f"Cached maha rewards in {dataset.repo_id} are missing "
+            f"{len(missing)} of {len(needed_indices)} required frames; recomputing."
+        )
+    else:
+        logging.info(
+            f"No cached maha rewards found at {dataset.repo_id}/"
+            f"{MAHA_REWARDS_CACHE_FILENAME}; computing."
+        )
+
+    rewards = compute_maha_rewards(
+        dataset=dataset,
+        policy_path=policy_path,
+        stats_path=stats_path,
+        device=device,
+        batch_size=batch_size,
+        num_workers=num_workers,
+    )
+
+    if cache_upload:
+        try:
+            _upload_cached_rewards(dataset.repo_id, rewards)
+        except Exception as error:  # noqa: BLE001
+            logging.warning(
+                f"Failed to upload maha rewards cache to {dataset.repo_id}: {error}"
+            )
+
     return rewards
