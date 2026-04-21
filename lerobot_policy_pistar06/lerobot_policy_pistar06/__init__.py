@@ -13,6 +13,5 @@
 # limitations under the License.
 
 from .configuration_pistar06 import PiStar06Config
-from .modeling_pistar06 import PiStar06Policy
 
-__all__ = ["PiStar06Config", "PiStar06Policy"]
+__all__ = ["PiStar06Config"]

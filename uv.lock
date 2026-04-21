@@ -722,6 +722,7 @@ dependencies = [
     { name = "google-cloud-tpu" },
     { name = "lerobot", extra = ["libero", "pi", "smolvla"] },
     { name = "lerobot-policy-advantage" },
+    { name = "lerobot-policy-pistar06" },
     { name = "matplotlib" },
     { name = "opencv-contrib-python" },
     { name = "piper-sdk" },
@@ -751,6 +752,7 @@ requires-dist = [
     { name = "google-cloud-tpu", specifier = ">=1.26.0" },
     { name = "lerobot", extras = ["libero", "pi", "smolvla"], git = "https://github.com/reeceomahoney/lerobot?branch=fix%2Frollout-return-observations-nested-dict" },
     { name = "lerobot-policy-advantage", editable = "lerobot_policy_advantage" },
+    { name = "lerobot-policy-pistar06", editable = "lerobot_policy_pistar06" },
     { name = "matplotlib", specifier = ">=3.7.0" },
     { name = "opencv-contrib-python", specifier = ">=4.12.0.88" },
     { name = "piper-sdk", specifier = ">=0.6.1" },
@@ -1837,6 +1839,21 @@ smolvla = [
 name = "lerobot-policy-advantage"
 version = "0.1.0"
 source = { editable = "lerobot_policy_advantage" }
+dependencies = [
+    { name = "distal" },
+    { name = "lerobot" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "distal" },
+    { name = "lerobot", git = "https://github.com/reeceomahoney/lerobot?branch=fix%2Frollout-return-observations-nested-dict" },
+]
+
+[[package]]
+name = "lerobot-policy-pistar06"
+version = "0.1.0"
+source = { editable = "lerobot_policy_pistar06" }
 dependencies = [
     { name = "distal" },
     { name = "lerobot" },

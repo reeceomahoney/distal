@@ -15,6 +15,7 @@ dependencies = [
   "scikit-learn>=1.3.0",
   "rerun-sdk>=0.22",
   "lerobot_policy_advantage",
+  "lerobot_policy_pistar06",
   "slurm-tools",
   "vastai>=0.2.8,<1.0",
   "skypilot-nightly[vast, kubernetes, runpod, gcp]>=0.8,<=1.0.0.dev20260326",
@@ -37,6 +38,7 @@ build-backend = "hatchling.build"
 lerobot_robot_piper = { path = "lerobot_robot_piper", editable = true }
 lerobot_teleoperator_piper = { path = "lerobot_teleoperator_piper", editable = true }
 lerobot_policy_advantage = { path = "lerobot_policy_advantage", editable = true }
+lerobot_policy_pistar06 = { path = "lerobot_policy_pistar06", editable = true }
 slurm-tools = { git = "https://github.com/reeceomahoney/slurm-tools.git" }
 lerobot = { git = "https://github.com/reeceomahoney/lerobot", branch = "fix/rollout-return-observations-nested-dict" }
 

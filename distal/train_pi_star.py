@@ -48,11 +48,11 @@ from lerobot.envs.factory import make_env, make_env_pre_post_processors
 from lerobot.envs.utils import close_envs
 from lerobot.scripts.lerobot_eval import eval_policy_all
 from lerobot.utils.constants import ACTION, OBS_LANGUAGE_TOKENS
+from lerobot_policy_pistar06.modeling_pistar06 import PiStar06Policy
 from torch.nn.utils import clip_grad_norm_
 from torch.utils.data import DataLoader
 
 from distal import train_value as base
-from distal.pistar06.modeling_pistar06 import PiStar06Policy
 
 if TYPE_CHECKING:
     from distal.value_model import RECAPValueNetwork
@@ -294,7 +294,7 @@ def _build_policy_config(
     train_dataset: LeRobotDataset,
 ):
     """Build a PiStar06Config from the training config and dataset metadata."""
-    from distal.pistar06.configuration_pistar06 import PiStar06Config
+    from lerobot_policy_pistar06.configuration_pistar06 import PiStar06Config
 
     features = dataset_to_policy_features(train_dataset.meta.features)
     output_features = {
@@ -996,6 +996,7 @@ def run_recap_pistar_train_val(cfg: RECAPPiStarTrainingConfig) -> None:
 
     # ── 2. Build policy config and preprocessor ────────────────────────────
     policy_cfg = _build_policy_config(cfg, full_dataset)
+    policy_cfg.n_action_steps = 10
     _log_memory("post-dataset-split")
 
     # ── 3. Pre-compute advantages using Pi0.5-based value network ────────

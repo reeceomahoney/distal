@@ -91,7 +91,7 @@ from lerobot.utils.constants import (
     OPENPI_ATTENTION_MASK_VALUE,
 )
 
-from distal.pistar06.configuration_pistar06 import PiStar06Config
+from lerobot_policy_pistar06.configuration_pistar06 import PiStar06Config
 
 DEFAULT_IMAGE_SIZE = 224
 
