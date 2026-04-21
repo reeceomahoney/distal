@@ -118,15 +118,12 @@ def _dataset_frame_indices(dataset: LeRobotDataset) -> list[int]:
     return [int(dataset.hf_dataset[i]["index"]) for i in range(len(dataset.hf_dataset))]
 
 
-def _try_load_cached_rewards(
-    dataset_repo_id: str, revision: str | None
-) -> dict[int, float] | None:
+def _try_load_cached_rewards(dataset_repo_id: str) -> dict[int, float] | None:
     try:
         local_path = hf_hub_download(
             repo_id=dataset_repo_id,
             filename=MAHA_REWARDS_CACHE_FILENAME,
             repo_type="dataset",
-            revision=revision,
         )
     except (EntryNotFoundError, RepositoryNotFoundError):
         return None
@@ -173,7 +170,7 @@ def load_or_compute_maha_rewards(
     needed_indices = _dataset_frame_indices(dataset)
     needed_set = set(needed_indices)
 
-    cached = _try_load_cached_rewards(dataset.repo_id, dataset.revision)
+    cached = _try_load_cached_rewards(dataset.repo_id)
     if cached is not None:
         missing = needed_set - cached.keys()
         if not missing:
