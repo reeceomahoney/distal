@@ -1758,7 +1758,7 @@ requires-dist = [
 [[package]]
 name = "libero"
 version = "0.1.0"
-source = { git = "https://github.com/reeceomahoney/LIBERO-plus.git?rev=distal-deps#aa74e0e4da0c6fdd4aab166cb87d1a81047fbe52" }
+source = { git = "https://github.com/reeceomahoney/LIBERO-plus.git?rev=distal-deps#edfbbe1f00ea8b2fb6ae2d1ae5b7317f3241f29c" }
 dependencies = [
     { name = "bddl" },
     { name = "easydict" },
