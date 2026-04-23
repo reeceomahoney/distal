@@ -1059,6 +1059,8 @@ def run_recap_pistar_train_val(cfg: RECAPPiStarTrainingConfig) -> None:
         epoch_loss = 0.0
         epoch_samples = 0
         epoch_start = time_module.perf_counter()
+        last_log_time = epoch_start
+        last_log_samples = 0
         skipped_batches = 0
 
         train_iter = iter(train_loader)
@@ -1125,10 +1127,21 @@ def run_recap_pistar_train_val(cfg: RECAPPiStarTrainingConfig) -> None:
                     epoch_loss / epoch_samples if epoch_samples > 0 else float("nan")
                 )
                 lr = optimizer.param_groups[0]["lr"]
-                elapsed = time_module.perf_counter() - epoch_start
+                now = time_module.perf_counter()
+                elapsed = now - epoch_start
+                interval_elapsed = now - last_log_time
+                interval_samples = epoch_samples - last_log_samples
+                samples_per_sec = (
+                    interval_samples / interval_elapsed
+                    if interval_elapsed > 0
+                    else float("nan")
+                )
+                last_log_time = now
+                last_log_samples = epoch_samples
                 logging.info(
                     f"[Epoch {epoch}/{cfg.epochs} step {step + 1}] "
                     f"train_loss={avg_loss:.5f} lr={lr:.2e} elapsed={elapsed:.1f}s "
+                    f"samples/s={samples_per_sec:.1f} "
                     f"global_step={global_train_step}"
                 )
                 wandb_step_metrics.update(
@@ -1136,6 +1149,7 @@ def run_recap_pistar_train_val(cfg: RECAPPiStarTrainingConfig) -> None:
                         "train/loss": avg_loss,
                         "train/lr": lr,
                         "train/step_loss": loss.item(),
+                        "train/samples_per_sec": samples_per_sec,
                         "global_step": global_train_step,
                     }
                 )
