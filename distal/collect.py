@@ -4,15 +4,18 @@ Rolls out the policy in LIBERO, recording observations, actions, and
 per-episode success into a LeRobot dataset.
 """
 
+import json
 import math
 import multiprocessing
 import os
+import random
 
 os.environ["MUJOCO_GL"] = "egl"
 
 import time
 from contextlib import nullcontext
 from dataclasses import dataclass
+from importlib.resources import files
 from pathlib import Path
 
 import draccus
@@ -30,7 +33,6 @@ from lerobot.utils.device_utils import get_safe_torch_device
 from lerobot.utils.import_utils import register_third_party_plugins
 from lerobot.utils.random_utils import set_seed
 from lerobot.utils.utils import init_logging
-from libero.libero import benchmark
 
 multiprocessing.set_start_method("spawn", force=True)
 
@@ -46,13 +48,29 @@ def auto_n_envs(n_episodes: int) -> int:
 class EvalDistConfig:
     policy_path: str = "lerobot/pi05-libero"
     base_dataset_repo_id: str = "lerobot/libero"
-    n_episodes: int = 50
-    n_envs: int = 10  # 0 = auto-scale based on CPU cores and n_episodes
-    dataset_repo_id: str = "reece-omahoney/pi05-libero-10"
+    n_episodes: int = 1
+    n_envs: int = 1  # 0 = auto-scale based on CPU cores and n_episodes
+    dataset_repo_id: str = "reece-omahoney/pi05-libero-plus"
     device: str = "cuda"
     max_tasks: int | None = None  # limit number of tasks (None = all)
+    per_cell: int = 1  # tasks sampled per (category, difficulty_level) cell
     seed: int = 0
     use_amp: bool = True
+
+
+def sample_task_ids(suite_name: str, per_cell: int = 1, seed: int = 0) -> list[int]:
+    """Sample task IDs stratified by (category, difficulty_level)."""
+    classif = json.loads(
+        (files("libero.libero") / "benchmark" / "task_classification.json").read_text()
+    )
+    by_cell: dict[tuple, list[int]] = {}
+    for entry in classif[suite_name]:
+        key = (entry["category"], entry.get("difficulty_level"))
+        by_cell.setdefault(key, []).append(entry["id"])
+    rng = random.Random(seed)
+    return sorted(
+        i for ids in by_cell.values() for i in rng.sample(ids, min(per_cell, len(ids)))
+    )
 
 
 def write_episodes_to_dataset(
@@ -140,10 +158,10 @@ def main(cfg: EvalDistConfig):
     )
 
     # ── Rollout ──
-    suite = benchmark.get_benchmark_dict()[suite_name]()
-    n_tasks = len(suite.tasks)
+    task_ids = sample_task_ids(suite_name, per_cell=cfg.per_cell, seed=cfg.seed)
     if cfg.max_tasks is not None:
-        n_tasks = min(n_tasks, cfg.max_tasks)
+        task_ids = task_ids[: cfg.max_tasks]
+    n_tasks = len(task_ids)
     all_successes: list[bool] = []
     t_start = time.monotonic()
 
@@ -154,7 +172,7 @@ def main(cfg: EvalDistConfig):
     )
     try:
         with torch.no_grad(), amp_ctx:
-            for task_id in range(n_tasks):
+            for i, task_id in enumerate(task_ids):
                 task_env_cfg = LiberoEnvConfig(
                     suite_name,
                     fps=10,
@@ -165,7 +183,7 @@ def main(cfg: EvalDistConfig):
                 task_envs = make_env(task_env_cfg, n_envs=n_envs, use_async_envs=True)
                 vec_env = task_envs[suite_name][task_id]
                 task_desc = vec_env.call("task_description")[0]  # ty: ignore[unresolved-attribute]
-                print(f"\nTask {task_id + 1}/{n_tasks}: {task_desc}")
+                print(f"\nTask {i + 1}/{n_tasks} (id={task_id}): {task_desc}")
 
                 info = lerobot_eval_policy(
                     env=vec_env,
