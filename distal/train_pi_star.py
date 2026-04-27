@@ -83,6 +83,7 @@ class RECAPPiStarTrainingConfig:
     num_workers: int = 4
     learning_rate: float = 2e-4
     decay_learning_rate: float = 2e-5
+    lr_decay: bool = True
     weight_decay: float = 1e-8
     warmup_steps: int = 1000
     max_grad_norm: float = 1.0
@@ -1046,14 +1047,19 @@ def run_recap_pistar_train_val(cfg: RECAPPiStarTrainingConfig) -> None:
     warmup_scheduler = torch.optim.lr_scheduler.LinearLR(
         optimizer, start_factor=1e-8, end_factor=1.0, total_iters=cfg.warmup_steps
     )
-    cosine_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-        optimizer,
-        T_max=total_steps - cfg.warmup_steps,
-        eta_min=cfg.decay_learning_rate,
-    )
+    if cfg.lr_decay:
+        post_warmup_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+            optimizer,
+            T_max=total_steps - cfg.warmup_steps,
+            eta_min=cfg.decay_learning_rate,
+        )
+    else:
+        post_warmup_scheduler = torch.optim.lr_scheduler.ConstantLR(
+            optimizer, factor=1.0, total_iters=total_steps - cfg.warmup_steps
+        )
     scheduler = torch.optim.lr_scheduler.SequentialLR(
         optimizer,
-        schedulers=[warmup_scheduler, cosine_scheduler],
+        schedulers=[warmup_scheduler, post_warmup_scheduler],
         milestones=[cfg.warmup_steps],
     )
 
