@@ -110,12 +110,17 @@ def sample_task_ids(suite_name: str, per_cell: int = 1, seed: int = 0) -> list[i
 
 
 def make_fat_vec_env(
-    env_cfg: LiberoEnvConfig, task_ids: list[int]
+    env_cfg: LiberoEnvConfig,
+    task_ids: list[int],
+    n_envs_per_task: int = 1,
 ) -> gym.vector.AsyncVectorEnv:
-    """Build one AsyncVectorEnv with a different task_id in each sub-env.
+    """Build one AsyncVectorEnv with ``n_envs_per_task`` sub-envs per task_id.
 
-    All task_ids must come from the same suite (max_episode_steps is read off
-    the first env, so mixing suites would silently truncate or over-run).
+    Total sub-envs = ``len(task_ids) * n_envs_per_task``.  Within a task the
+    sub-envs get distinct ``episode_index`` values (0..n_envs_per_task-1), which
+    LIBERO uses to seed different initial states.  All task_ids must come from
+    the same suite (max_episode_steps is read off the first env, so mixing
+    suites would silently truncate or over-run).
     """
     suite = _get_suite(env_cfg.task)
     cameras = parse_camera_names(env_cfg.camera_name)
@@ -129,7 +134,7 @@ def make_fat_vec_env(
                 suite=suite,
                 suite_name=env_cfg.task,
                 task_id=tid,
-                n_envs=1,
+                n_envs=n_envs_per_task,
                 camera_names=cameras,
                 episode_length=env_cfg.episode_length,
                 init_states=env_cfg.init_states,
