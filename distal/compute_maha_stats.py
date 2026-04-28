@@ -18,7 +18,7 @@ from lerobot.utils.device_utils import get_safe_torch_device
 from lerobot.utils.import_utils import register_third_party_plugins
 from lerobot.utils.utils import init_logging, inside_slurm
 from safetensors.numpy import save_file
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Subset
 from tqdm import tqdm
 
 from distal.embedding import embed_prefix_pooled
@@ -76,13 +76,21 @@ def fit_gaussian_from_dataset(
     dataset: LeRobotDataset,
     batch_size: int,
     num_workers: int,
+    max_frames: int | None = None,
+    subsample_seed: int = 0,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Embed the full dataset and return (mean, cov_inv)."""
     device = next(policy.parameters()).device
 
     print(f"Loading dataset: {dataset.repo_id} with {len(dataset)} frames")
+    loader_dataset: torch.utils.data.Dataset = dataset
+    if max_frames is not None and max_frames < len(dataset):
+        rng = np.random.default_rng(subsample_seed)
+        indices = rng.choice(len(dataset), size=max_frames, replace=False)
+        loader_dataset = Subset(dataset, sorted(indices.tolist()))
+        print(f"Subsampled to {len(loader_dataset)} frames (seed={subsample_seed})")
     dataloader = DataLoader(
-        dataset,
+        loader_dataset,
         batch_size=batch_size,
         shuffle=False,
         num_workers=num_workers,
@@ -119,6 +127,8 @@ class MahaStatsConfig:
     device: str = "cuda"
     batch_size: int = 512
     num_workers: int = 32
+    max_frames: int | None = 100_000
+    subsample_seed: int = 0
     rename_map: dict[str, str] = field(
         default_factory=lambda: {
             "observation.images.front": "observation.images.image",
@@ -166,6 +176,8 @@ def main(cfg: MahaStatsConfig):
         dataset=dataset,
         batch_size=cfg.batch_size,
         num_workers=cfg.num_workers,
+        max_frames=cfg.max_frames,
+        subsample_seed=cfg.subsample_seed,
     )
 
     # Save locally
