@@ -18,8 +18,8 @@ set -euo pipefail
 
 N_AGENTS=${1:-5}
 ENTITY="reeceomahoney"
-PROJECT="distal"
-SWEEP_CONFIG="configs/sweep.yaml"
+PROJECT="${PROJECT:-distal}"
+SWEEP_CONFIG="${SWEEP_CONFIG:-configs/sweep.yaml}"
 
 cd "$(dirname "$0")/.."
 
