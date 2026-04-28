@@ -174,7 +174,7 @@ class RECAPPiStarTrainingConfig:
     eval_per_cell: int = 1
     eval_task_seed: int = 0
     eval_max_tasks: int | None = None
-    eval_parallel_envs: int = 0  # libero-plus only; 0 = auto-scale by CPU cores
+    eval_parallel_envs: int = 16  # libero-plus only; 0 = auto-scale by CPU cores
     eval_n_envs_per_task: int = 1  # base-LIBERO only
     eval_n_episodes_per_task: int = 1
 
