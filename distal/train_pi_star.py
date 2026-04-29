@@ -137,6 +137,13 @@ class RECAPPiStarTrainingConfig:
     # Value network pre-computation
     vn_batch_size: int = 640
 
+    # Maha-rewards re-computation (only used when the value network was trained
+    # with reward_mode="maha"; loads from the dataset-repo cache when present).
+    # Defaults mirror train_value.py since maha embedding runs the full Pi0.5
+    # backbone, not the value network's smaller VLM.
+    maha_embed_batch_size: int = 32
+    maha_embed_num_workers: int = 4
+
     # Advantage caching: content-addressed cache keyed by a hash of the
     # inputs that determine the precomputed advantages. Cache files are
     # mirrored on HF Hub under ``advantage_cache_repo_id`` (set to None to
@@ -145,7 +152,7 @@ class RECAPPiStarTrainingConfig:
     # hashes can't detect.
     advantage_cache_repo_id: str | None = "reece-omahoney/advantage-caches"
     advantage_cache_local_dir: str = "outputs"
-    advantage_cache_schema_version: int = 1
+    advantage_cache_schema_version: int = 2
 
     # Sim eval — fat AsyncVectorEnv eval over LIBERO suites.  Two modes:
     #
@@ -778,7 +785,11 @@ def _run_sim_eval(
                 if cfg.eval_max_tasks is not None:
                     ids = ids[: cfg.eval_max_tasks]
                 chunks = [[tid] for tid in ids]
-                n_envs_per_task = cfg.eval_n_envs_per_task
+                n_envs_per_task = (
+                    cfg.eval_n_envs_per_task
+                    if cfg.eval_n_envs_per_task > 0
+                    else parallel_envs
+                )
 
             env_cfg = LiberoEnv(
                 task=suite_name,
@@ -915,10 +926,13 @@ def run_recap_pistar_train_val(cfg: RECAPPiStarTrainingConfig) -> None:
         "from the dataset's 'success' column."
     )
 
+    vn_reward_mode: str = "steps"
+    vn_maha_stats_path: str | None = None
+    vn_base_policy: str | None = None
     if cfg.enable_advantage_conditioning:
-        # Pull num_value_bins from the VN policy config and c_fail from its
-        # train_config.json so the return targets used here match what the
-        # value network was trained against.
+        # Pull num_value_bins from the VN policy config and c_fail / reward_mode
+        # / maha_stats_path from its train_config.json so the return targets used
+        # here match what the value network was trained against.
         vn_policy_cfg = PreTrainedConfig.from_pretrained(
             cfg.value_network_pretrained_path
         )
@@ -938,6 +952,21 @@ def run_recap_pistar_train_val(cfg: RECAPPiStarTrainingConfig) -> None:
                 "to match value network"
             )
             cfg.c_fail = float(vn_c_fail)
+
+        vn_reward_mode = str(vn_train_cfg.get("reward_mode", "steps"))
+        vn_maha_stats_path = vn_train_cfg.get("maha_stats_path")
+        vn_base_policy = vn_train_cfg.get("base_policy")
+        logging.info(
+            f"Value network reward_mode={vn_reward_mode!r} "
+            f"maha_stats_path={vn_maha_stats_path!r} "
+            f"base_policy={vn_base_policy!r}"
+        )
+        if vn_reward_mode == "maha" and vn_maha_stats_path is None:
+            raise ValueError(
+                "Value network was trained with reward_mode='maha' but its "
+                "train_config.json is missing 'maha_stats_path'; cannot "
+                "reconstruct the per-step rewards used to build R_t."
+            )
     else:
         logging.info(
             "Advantage conditioning DISABLED — training vanilla Pi0.5 "
@@ -945,11 +974,31 @@ def run_recap_pistar_train_val(cfg: RECAPPiStarTrainingConfig) -> None:
         )
         cfg.advantage_dropout = 1.0
 
+    step_rewards: dict[int, float] | None = None
+    if cfg.enable_advantage_conditioning and vn_reward_mode == "maha":
+        from distal.maha_reward import load_or_compute_maha_rewards
+
+        embed_policy_path = vn_base_policy or cfg.pretrained_path
+        logging.info(
+            "Loading or computing Mahalanobis-distance rewards to match the "
+            f"value network's training signal (embed policy: {embed_policy_path}, "
+            f"stats: {vn_maha_stats_path})"
+        )
+        step_rewards = load_or_compute_maha_rewards(
+            dataset=full_dataset,
+            policy_path=embed_policy_path,
+            stats_path=vn_maha_stats_path,  # ty: ignore[invalid-argument-type]
+            device=device,
+            batch_size=cfg.maha_embed_batch_size,
+            num_workers=cfg.maha_embed_num_workers,
+        )
+
     frame_targets = base._build_frame_targets(
         dataset=full_dataset,
         success_by_episode=success_by_episode,
         c_fail=cfg.c_fail,
         num_value_bins=cfg.num_value_bins,
+        step_rewards=step_rewards,
     )
     train_targets, val_targets = base._split_train_val_targets(
         frame_targets=frame_targets,
@@ -979,6 +1028,8 @@ def run_recap_pistar_train_val(cfg: RECAPPiStarTrainingConfig) -> None:
             value_network_pretrained_path=cfg.value_network_pretrained_path,
             c_fail=cfg.c_fail,
             num_value_bins=cfg.num_value_bins,
+            reward_mode=vn_reward_mode,
+            maha_stats_path=vn_maha_stats_path,
         )
         logging.info(f"Advantage cache signature: {signature}")
 
@@ -1017,6 +1068,8 @@ def run_recap_pistar_train_val(cfg: RECAPPiStarTrainingConfig) -> None:
                     "value_network_pretrained_path": cfg.value_network_pretrained_path,
                     "c_fail": cfg.c_fail,
                     "num_value_bins": cfg.num_value_bins,
+                    "reward_mode": vn_reward_mode,
+                    "maha_stats_path": vn_maha_stats_path,
                     "repo_id": cfg.repo_id,
                     "success_by_episode": success_by_episode,
                 },

@@ -46,11 +46,18 @@ def compute_signature(
     value_network_pretrained_path: str,
     c_fail: float,
     num_value_bins: int,
+    reward_mode: str,
+    maha_stats_path: str | None = None,
 ) -> str:
     """Build a deterministic 16-hex-char signature over all cache-affecting inputs."""
     dataset_sha = resolve_hub_sha(dataset_repo_id, "dataset", dataset_revision)
     vn_id = value_network_pretrained_path
     vn_sha = resolve_hub_sha(vn_id, "model")
+    maha_stats_sha = (
+        resolve_hub_sha(maha_stats_path, "model")
+        if reward_mode == "maha" and maha_stats_path is not None
+        else None
+    )
 
     sig_dict = {
         "schema_version": schema_version,
@@ -62,6 +69,9 @@ def compute_signature(
         "vn_sha": vn_sha,
         "c_fail": c_fail,
         "num_value_bins": num_value_bins,
+        "reward_mode": reward_mode,
+        "maha_stats_path": maha_stats_path if reward_mode == "maha" else None,
+        "maha_stats_sha": maha_stats_sha,
     }
     canonical = json.dumps(sig_dict, sort_keys=True)
     return hashlib.sha256(canonical.encode()).hexdigest()[:16]
