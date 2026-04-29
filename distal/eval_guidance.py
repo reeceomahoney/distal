@@ -14,7 +14,8 @@ import draccus
 
 @dataclass
 class EvalGuidanceConfig:
-    policy_path: str = "reece-omahoney/adv-libero-success-expert"
+    policy_path: str = "reece-omahoney/pistar06-libero-maha"
+    n_action_steps: int = 10
     guidance_scales: list[float] = field(default_factory=lambda: [1.0, 1.5, 2.0, 2.5])
 
 
@@ -24,7 +25,7 @@ def main(cfg: EvalGuidanceConfig):
 
     for beta in cfg.guidance_scales:
         print(f"\n{'=' * 60}")
-        print(f"  guidance_scale = {beta}")
+        print(f"  cfg_beta = {beta}")
         print(f"{'=' * 60}\n", flush=True)
 
         cmd = [
@@ -33,7 +34,8 @@ def main(cfg: EvalGuidanceConfig):
             "lerobot.scripts.lerobot_eval",
             "--config_path=configs/eval.yaml",
             f"--policy.path={cfg.policy_path}",
-            f"--policy.guidance_scale={beta}",
+            f"--policy.n_action_steps={cfg.n_action_steps}",
+            f"--policy.cfg_beta={beta}",
         ]
 
         result = subprocess.run(cmd, capture_output=False)
