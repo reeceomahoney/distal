@@ -80,7 +80,7 @@ class ValidationFramePrediction:
 class RECAPValueTrainingConfig:
     """Configuration for RECAP value-network train/val."""
 
-    repo_id: str = "reece-omahoney/pi05-libero-10"
+    repo_id: str = "reece-omahoney/pi05-libero-plus"
     root: str | None = None
     revision: str | None = None
     episodes: list[int] | None = None
@@ -119,7 +119,7 @@ class RECAPValueTrainingConfig:
     # training distribution (see distal/maha_reward.py).
     reward_mode: Literal["steps", "maha"] = "maha"
     base_policy: str = "lerobot/pi05-libero"
-    maha_stats_path: str = "reece-omahoney/pi05-maha-stats"
+    maha_stats_path: str = "reece-omahoney/pi05-libero-plus-maha-stats"
     maha_embed_batch_size: int = 32
     maha_embed_num_workers: int = 4
     # Upload computed maha rewards to the dataset repo for reuse on later runs.
@@ -144,13 +144,13 @@ class RECAPValueTrainingConfig:
     pretrained_path: str | None = "lerobot/pi05-libero"
 
     # Hub push for trained value network
-    value_repo_id: str | None = "reece-omahoney/value-maha-pi05-paligemma"
+    value_repo_id: str | None = "reece-omahoney/value-maha-libero-plus"
     push_to_hub: bool = True
 
     # Weights & Biases (optional; set wandb_project to enable)
     wandb_project: str | None = "distal-value"
     wandb_entity: str | None = None
-    wandb_run_name: str | None = "value-maha-pi05-paligemma"
+    wandb_run_name: str | None = "value-maha-libero-plus"
 
 
 class EarlyStopSignal(Exception):
