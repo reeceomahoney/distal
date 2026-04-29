@@ -40,10 +40,18 @@ from lerobot.utils.utils import init_logging
 multiprocessing.set_start_method("spawn", force=True)
 
 
+def available_cpus() -> int:
+    """Effective vCPU count: cgroup v2 quota (Vast/Docker) or affinity (SLURM)."""
+    with open("/sys/fs/cgroup/cpu.max") as f:
+        quota, period = f.read().split()
+    if quota != "max":
+        return max(1, int(int(quota) / int(period)))
+    return len(os.sched_getaffinity(0))
+
+
 def auto_parallel_envs() -> int:
     """Default parallel-env count based on CPU cores."""
-    cpu_cores = os.cpu_count() or 4
-    return max(1, min(64, math.floor(cpu_cores * 0.7)))
+    return max(1, min(64, math.floor(available_cpus() * 0.7)))
 
 
 @dataclass

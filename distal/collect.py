@@ -4,7 +4,6 @@ Rolls out the policy in LIBERO, recording observations, actions, and
 per-episode success into a LeRobot dataset.
 """
 
-import math
 import multiprocessing
 import os
 
@@ -32,14 +31,9 @@ from lerobot.utils.random_utils import set_seed
 from lerobot.utils.utils import init_logging
 from libero.libero import benchmark
 
+from distal.collect_libero_plus import auto_parallel_envs
+
 multiprocessing.set_start_method("spawn", force=True)
-
-
-def auto_n_envs(n_episodes: int) -> int:
-    """Pick n_envs based on CPU cores, capped by n_episodes."""
-    cpu_cores = os.cpu_count() or 4
-    by_cpu = max(1, math.floor(cpu_cores * 0.7))
-    return min(by_cpu, n_episodes, 64)
 
 
 @dataclass
@@ -98,7 +92,7 @@ def main(cfg: EvalDistConfig):
     torch.backends.cuda.matmul.allow_tf32 = True
     set_seed(cfg.seed)
 
-    n_envs = cfg.n_envs if cfg.n_envs > 0 else auto_n_envs(cfg.n_episodes)
+    n_envs = cfg.n_envs if cfg.n_envs > 0 else min(auto_parallel_envs(), cfg.n_episodes)
     print(f"Using n_envs={n_envs} (requested={cfg.n_envs})")
 
     # ── Load policy ──
