@@ -867,6 +867,7 @@ def run_recap_pistar_train_val(cfg: RECAPPiStarTrainingConfig) -> None:
         format="%(asctime)s - %(levelname)s - %(message)s",
         force=True,
     )
+    logging.getLogger("httpx").setLevel(logging.WARNING)
     base._set_seed(cfg.seed)
 
     output_dir = Path("outputs/pistar") / datetime.now().strftime("%Y-%m-%d/%H-%M-%S")
