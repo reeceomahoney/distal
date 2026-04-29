@@ -24,6 +24,8 @@ NVJSON
         curl ffmpeg libavutil-dev libavcodec-dev libavformat-dev libswscale-dev \
         git linux-libc-dev build-essential cmake \
         libosmesa6-dev libglfw3 \
+        libegl1 libexpat1 libfontconfig1-dev libgl1 libglvnd0 \
+        libmagickwand-dev libopengl0 \
     && rm -rf /var/lib/apt/lists/*
 
     # Install python packages

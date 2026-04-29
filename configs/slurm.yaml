@@ -5,7 +5,7 @@ command: >-
   --bind /data/engs-robotics-ml/kebl6123/.cache:/data/engs-robotics-ml/kebl6123/.cache
   --env "WANDB_API_KEY=${WANDB_API_KEY}"
   --env "HF_TOKEN=${HF_TOKEN}"
-  --env "PYTHONPATH=/data/engs-robotics-ml/kebl6123/distal:/data/engs-robotics-ml/kebl6123/distal/lerobot_policy_advantage"
+  --env "PYTHONPATH=/data/engs-robotics-ml/kebl6123/distal:/data/engs-robotics-ml/kebl6123/distal/lerobot_policy_pistar06"
   container.sif python distal/train_pi_star.py
 time: 12
 gpu: h100

@@ -60,6 +60,12 @@ singularity build --force --fakeroot container.sif container.def
 scp container.sif htc:/data/engs-robotics-ml/kebl6123/distal/container.sif
 """
 
+[tasks.download-assets]
+description = "Submit SLURM job to populate LIBERO-plus assets in HTC cache"
+run = """
+ssh htc 'cd /data/engs-robotics-ml/kebl6123/distal && mkdir -p slurm && cat > slurm/download_assets.sh && sbatch slurm/download_assets.sh' < scripts/download_assets.sh
+"""
+
 [tasks.sweep]
 description = "Create wandb sweep and submit N SLURM agents (default 5)"
 usage = 'arg "[n_agents]"'
