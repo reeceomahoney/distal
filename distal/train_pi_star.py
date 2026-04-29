@@ -56,6 +56,7 @@ from distal import advantage_cache
 from distal import train_value as base
 from distal.collect_libero_plus import (
     auto_parallel_envs,
+    base_task_name,
     make_fat_vec_env,
     sample_task_ids,
 )
@@ -83,7 +84,7 @@ class RECAPPiStarTrainingConfig:
     revision: str | None = None
     episodes: list[int] | None = None
 
-    epochs: int = 5
+    epochs: int = 6
     batch_size: int = 128
     num_workers: int = 8
     learning_rate: float = 1e-4
@@ -160,20 +161,17 @@ class RECAPPiStarTrainingConfig:
     #
     # Set sim_eval_every_n_train_steps=0 to disable sim eval entirely.
     is_libero_plus: bool = True
-    eval_suites: list[str] = field(
-        default_factory=lambda: [
-            "libero_spatial",
-            "libero_object",
-            "libero_goal",
-            "libero_10",
-        ]
-    )
+    eval_suites: list[str] = field(default_factory=lambda: ["libero_goal"])
     eval_fps: int = 20
     eval_observation_height: int = 256
     eval_observation_width: int = 256
     eval_per_cell: int = 1
     eval_task_seed: int = 0
     eval_max_tasks: int | None = None
+    # libero-plus only: restrict eval to a single base task (after stripping
+    # perturbation suffixes), e.g. "turn_on_the_stove". When set, sampled task
+    # IDs are filtered to only those whose base name matches.
+    eval_base_task: str | None = "turn_on_the_stove"
     eval_parallel_envs: int = 0  # libero-plus only; 0 = auto-scale by CPU cores
     eval_n_envs_per_task: int = 1  # base-LIBERO only
     eval_n_episodes_per_task: int = 1
@@ -186,6 +184,33 @@ class RECAPPiStarTrainingConfig:
     wandb_project: str | None = "distal"
     wandb_entity: str | None = None
     wandb_run_name: str | None = "pistar06-libero-plus-steps"
+
+
+def _resolve_eval_task_ids(
+    suite_name: str, cfg: RECAPPiStarTrainingConfig
+) -> list[int]:
+    """Sample task IDs for a suite, then optionally filter to one base task."""
+    ids = sample_task_ids(
+        suite_name, per_cell=cfg.eval_per_cell, seed=cfg.eval_task_seed
+    )
+    if cfg.eval_base_task is not None:
+        from importlib.resources import files
+
+        classif = json.loads(
+            (
+                files("libero.libero") / "benchmark" / "task_classification.json"
+            ).read_text()
+        )
+        id_to_base = {e["id"]: base_task_name(e["name"]) for e in classif[suite_name]}
+        ids = [i for i in ids if id_to_base[i] == cfg.eval_base_task]
+        if not ids:
+            raise ValueError(
+                f"eval_base_task={cfg.eval_base_task!r} matched no task IDs "
+                f"in suite {suite_name!r}"
+            )
+    if cfg.eval_max_tasks is not None:
+        ids = ids[: cfg.eval_max_tasks]
+    return ids
 
 
 def _init_wandb(cfg: RECAPPiStarTrainingConfig):
@@ -742,11 +767,7 @@ def _run_sim_eval(
     with torch.no_grad():
         for suite_name in cfg.eval_suites:
             if cfg.is_libero_plus:
-                ids = sample_task_ids(
-                    suite_name, per_cell=cfg.eval_per_cell, seed=cfg.eval_task_seed
-                )
-                if cfg.eval_max_tasks is not None:
-                    ids = ids[: cfg.eval_max_tasks]
+                ids = _resolve_eval_task_ids(suite_name, cfg)
                 chunks = [
                     ids[i : i + parallel_envs]
                     for i in range(0, len(ids), parallel_envs)
@@ -1128,14 +1149,11 @@ def run_recap_pistar_train_val(cfg: RECAPPiStarTrainingConfig) -> None:
             logging.info(
                 f"LIBERO-plus sim eval every {cfg.sim_eval_every_n_train_steps} "
                 f"steps (suites={cfg.eval_suites}, per_cell={cfg.eval_per_cell}, "
-                f"task_seed={cfg.eval_task_seed})"
+                f"task_seed={cfg.eval_task_seed}, "
+                f"base_task={cfg.eval_base_task})"
             )
             for suite in cfg.eval_suites:
-                ids = sample_task_ids(
-                    suite, per_cell=cfg.eval_per_cell, seed=cfg.eval_task_seed
-                )
-                if cfg.eval_max_tasks is not None:
-                    ids = ids[: cfg.eval_max_tasks]
+                ids = _resolve_eval_task_ids(suite, cfg)
                 logging.info(f"  {suite}: {len(ids)} task IDs")
         else:
             logging.info(
