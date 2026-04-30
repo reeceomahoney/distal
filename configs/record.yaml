@@ -11,5 +11,9 @@ dataset:
   episode_time_s: 600
   reset_time_s: 10
   num_episodes: 50
+  streaming_encoding: true
+  vcodec: auto
+  push_to_hub: false
 
 display_data: true
+display_compressed_images: true

@@ -679,7 +679,7 @@ name = "distal"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
-    { name = "lerobot", extra = ["libero", "pi", "smolvla", "training"] },
+    { name = "lerobot", extra = ["intelrealsense", "libero", "pi", "smolvla", "training"] },
     { name = "lerobot-policy-pistar06" },
     { name = "matplotlib" },
     { name = "opencv-contrib-python" },
@@ -708,7 +708,7 @@ hardware = [
 
 [package.metadata]
 requires-dist = [
-    { name = "lerobot", extras = ["libero", "pi", "smolvla", "training"], git = "https://github.com/reeceomahoney/lerobot?branch=distal-libero-plus" },
+    { name = "lerobot", extras = ["libero", "pi", "smolvla", "training", "intelrealsense"], git = "https://github.com/reeceomahoney/lerobot?branch=distal-libero-plus" },
     { name = "lerobot-policy-pistar06", editable = "lerobot_policy_pistar06" },
     { name = "matplotlib", specifier = ">=3.7.0" },
     { name = "opencv-contrib-python", specifier = ">=4.12.0.88" },
@@ -1639,6 +1639,10 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
+intelrealsense = [
+    { name = "pyrealsense2", marker = "sys_platform != 'darwin'" },
+    { name = "pyrealsense2-macosx", marker = "sys_platform == 'darwin'" },
+]
 libero = [
     { name = "av" },
     { name = "datasets" },
@@ -2786,6 +2790,23 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/f3/91/9c6ee907786a473bf81c5f53cf703ba0957b23ab84c264080fb5a450416f/pyparsing-3.3.2.tar.gz", hash = "sha256:c777f4d763f140633dcb6d8a3eda953bf7a214dc4eff598413c070bcdc117cbc", size = 6851574, upload-time = "2026-01-21T03:57:59.36Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/10/bd/c038d7cc38edc1aa5bf91ab8068b63d4308c66c4c8bb3cbba7dfbc049f9c/pyparsing-3.3.2-py3-none-any.whl", hash = "sha256:850ba148bd908d7e2411587e247a1e4f0327839c40e2e5e6d05a007ecc69911d", size = 122781, upload-time = "2026-01-21T03:57:55.912Z" },
+]
+
+[[package]]
+name = "pyrealsense2"
+version = "2.56.5.9235"
+source = { registry = "https://pypi.org/simple" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/fc/20/a46e60a496a17f1cf0cbdffb45e66dc015756e4dbce83580fd569e53e178/pyrealsense2-2.56.5.9235-cp312-cp312-manylinux1_x86_64.whl", hash = "sha256:ba2c22981111adbefb169c39e023af4352a2409dfbff59f02c2404c68b82064b", size = 11062766, upload-time = "2025-07-28T14:59:26.551Z" },
+    { url = "https://files.pythonhosted.org/packages/22/b5/dd8349abac780aed774f65825fc2ed3ca832b0ad2bf3293262bfa9a517b2/pyrealsense2-2.56.5.9235-cp312-cp312-win_amd64.whl", hash = "sha256:e9c64b94cf6170a3ad60416ff1bf969df8aafe383d4bff14e0fa10b2459d885b", size = 7801788, upload-time = "2025-07-28T14:59:28.303Z" },
+]
+
+[[package]]
+name = "pyrealsense2-macosx"
+version = "2.56.5"
+source = { registry = "https://pypi.org/simple" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/45/42/df369b9c8943395e8166dfc2006163279a850d7990e9c7fb7a0f0bdc4bbb/pyrealsense2_macosx-2.56.5-cp312-cp312-macosx_15_0_arm64.whl", hash = "sha256:7a0c2e124d74da97c3a928f0dc084c51f1473745a863db08cc2191bd2bdf8623", size = 4509608, upload-time = "2026-02-16T09:56:06.215Z" },
 ]
 
 [[package]]

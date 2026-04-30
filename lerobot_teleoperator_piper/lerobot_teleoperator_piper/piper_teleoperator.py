@@ -15,13 +15,17 @@ class PiperTeleoperator(Teleoperator):
     def __init__(self, config: PiperTeleoperatorConfig):
         super().__init__(config)
         self.config = config
-        self.piper = C_PiperInterface_V2(self.config.can_interface)
+        self.arms = {
+            "left": C_PiperInterface_V2(self.config.can_interface_left),
+            "right": C_PiperInterface_V2(self.config.can_interface_right),
+        }
         self._is_piper_connected = False
 
     @property
     def action_features(self) -> dict:
         ft = {f"{name}.pos": float for name in self.config.joint_names}
-        ft["gripper.pos"] = float
+        for side in self.arms:
+            ft[f"{side}_gripper.pos"] = float
         return ft
 
     @property
@@ -34,7 +38,8 @@ class PiperTeleoperator(Teleoperator):
 
     @check_if_already_connected
     def connect(self, calibrate: bool = True) -> None:
-        self.piper.ConnectPort()
+        for arm in self.arms.values():
+            arm.ConnectPort()
         time.sleep(0.1)
         self._is_piper_connected = True
 
@@ -49,13 +54,13 @@ class PiperTeleoperator(Teleoperator):
         pass
 
     def get_action(self) -> dict[str, Any]:
-        jc = self.piper.GetArmJointCtrl().joint_ctrl
-        gc = self.piper.GetArmGripperCtrl()
-
-        action = {
-            f"joint_{i}.pos": getattr(jc, f"joint_{i}") / 1000.0 for i in range(1, 7)
-        }
-        action["gripper.pos"] = gc.gripper_ctrl.grippers_angle / 10000.0
+        action: dict[str, Any] = {}
+        for side, arm in self.arms.items():
+            jc = arm.GetArmJointCtrl().joint_ctrl
+            gc = arm.GetArmGripperCtrl()
+            for i in range(1, 7):
+                action[f"{side}_joint_{i}.pos"] = getattr(jc, f"joint_{i}") / 1000.0
+            action[f"{side}_gripper.pos"] = gc.gripper_ctrl.grippers_angle / 10000.0
 
         return action
 
@@ -64,4 +69,5 @@ class PiperTeleoperator(Teleoperator):
 
     @check_if_not_connected
     def disconnect(self) -> None:
-        self.piper.DisconnectPort()
+        for arm in self.arms.values():
+            arm.DisconnectPort()
