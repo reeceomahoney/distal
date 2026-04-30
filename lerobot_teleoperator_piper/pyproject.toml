@@ -2,11 +2,8 @@
 name = "lerobot_teleoperator_piper"
 version = "0.1.0"
 description = "Piper teleoperator plugin for LeRobot"
-requires-python = ">=3.10,<3.11"
-dependencies = [
-  "lerobot @ git+https://github.com/huggingface/lerobot.git",
-  "piper-sdk>=0.6.1",
-]
+requires-python = ">=3.12,<3.13"
+dependencies = ["lerobot", "distal"]
 
 [build-system]
 requires = ["hatchling"]
