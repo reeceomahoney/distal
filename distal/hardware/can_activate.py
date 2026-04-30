@@ -1,11 +1,11 @@
 """Activate and configure CAN interfaces for Piper robot arms.
 
 Each -p argument maps a USB port to a CAN interface name and bitrate.
-If only one CAN interface exists, -p can be omitted.
+Without -p, all detected interfaces are brought up at the default bitrate
+keeping their existing names.
 
-Examples:
+Example:
     python can_activate.py -p 1-1:1.0=can_arm1=1000000 -p 1-2:1.0=can_arm2=1000000
-    python can_activate.py can0 --bitrate 1000000
 """
 
 from __future__ import annotations
@@ -85,9 +85,6 @@ def main() -> None:
         metavar="USB=NAME=BITRATE",
         help="USB port mapping (repeatable), e.g. 1-1:1.0=can_arm1=1000000",
     )
-    parser.add_argument(
-        "name", nargs="?", default="can0", help="Target name (simple mode)"
-    )
     parser.add_argument("--bitrate", type=int, default=1_000_000)
     args = parser.parse_args()
 
@@ -110,13 +107,8 @@ def main() -> None:
                     continue
                 configure(ipr, by_bus[usb_addr], name, bitrate)
         else:
-            if len(interfaces) != 1:
-                for i in interfaces:
-                    print(f"  {i['name']} @ USB {i['bus_info']}")
-                n = len(interfaces)
-                sys.exit(f"Error: found {n} CAN interfaces, use -p to specify mapping")
-            configure(ipr, interfaces[0], args.name, args.bitrate)
+            for iface in interfaces:
+                configure(ipr, iface, iface["name"], args.bitrate)
 
 
 if __name__ == "__main__":
-    main()
