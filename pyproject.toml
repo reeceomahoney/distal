@@ -17,6 +17,7 @@ dependencies = [
   "vastai-sdk>=0.2.5,<0.3",
   "skypilot-nightly[vast, kubernetes, runpod, gcp]>=0.8,<=1.0.0.dev20260326",
   "runpod>=1.8.2",
+  "pyroute2>=0.9.5",
   "pyopengl-accelerate>=3.1.10",
 ]
 
