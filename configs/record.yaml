@@ -5,15 +5,15 @@ teleop:
   type: piper_teleop
 
 dataset:
-  repo_id: reece-omahoney/cube-pick-rand
-  single_task: Pick and place the cube
+  repo_id: reece-omahoney/remove-pen-lid
+  single_task: Remove the pen lid
   fps: 20
   episode_time_s: 600
-  reset_time_s: 10
+  reset_time_s: 15
   num_episodes: 50
   streaming_encoding: true
   vcodec: auto
-  push_to_hub: false
+  push_to_hub: true
 
-display_data: true
+display_data: false
 display_compressed_images: true
