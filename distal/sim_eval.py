@@ -97,74 +97,116 @@ def run_sim_eval(
     suite_metrics: dict[str, dict[str, list[float]]] = defaultdict(
         lambda: {"successes": [], "sum_rewards": []}
     )
+    plan: list[tuple[str, int, list[int], LiberoEnv, int]] = []
+    for suite_name in suites:
+        if is_libero_plus:
+            ids = resolve_eval_task_ids(
+                suite_name, per_cell, task_seed, base_task, max_tasks
+            )
+            chunks = [
+                ids[i : i + parallel_envs] for i in range(0, len(ids), parallel_envs)
+            ]
+            envs_per_task = 1
+        else:
+            ids = list(range(10))
+            if max_tasks is not None:
+                ids = ids[:max_tasks]
+            chunks = [[tid] for tid in ids]
+            envs_per_task = n_envs_per_task if n_envs_per_task > 0 else parallel_envs
+
+        env_cfg = LiberoEnv(
+            task=suite_name,
+            fps=fps,
+            observation_height=observation_height,
+            observation_width=observation_width,
+            is_libero_plus=is_libero_plus,
+        )
+        for chunk_idx, chunk in enumerate(chunks):
+            plan.append((suite_name, chunk_idx, chunk, env_cfg, envs_per_task))
+
+    total_chunks = len(plan)
+    total_episodes = sum(
+        len(chunk) * envs_per_task * n_episodes_per_task
+        for _, _, chunk, _, envs_per_task in plan
+    )
+    episodes_done = 0
     rendered = 0
     first_video_path: str | None = None
     t0 = time.monotonic()
 
     with torch.no_grad():
-        for suite_name in suites:
-            if is_libero_plus:
-                ids = resolve_eval_task_ids(
-                    suite_name, per_cell, task_seed, base_task, max_tasks
-                )
-                chunks = [
-                    ids[i : i + parallel_envs]
-                    for i in range(0, len(ids), parallel_envs)
-                ]
-                envs_per_task = 1
-            else:
-                ids = list(range(10))
-                if max_tasks is not None:
-                    ids = ids[:max_tasks]
-                chunks = [[tid] for tid in ids]
-                envs_per_task = (
-                    n_envs_per_task if n_envs_per_task > 0 else parallel_envs
+        for chunk_pos, (
+            suite_name,
+            chunk_idx,
+            chunk,
+            env_cfg,
+            envs_per_task,
+        ) in enumerate(plan, start=1):
+            vec_env = make_fat_vec_env(env_cfg, chunk, n_envs_per_task=envs_per_task)
+            try:
+                chunk_videos_dir: Path | None = None
+                chunk_max_render = 0
+                if videos_dir is not None and rendered < max_episodes_rendered:
+                    chunk_videos_dir = videos_dir / f"{suite_name}_{chunk_idx}"
+                    chunk_max_render = max_episodes_rendered - rendered
+
+                n_episodes_chunk = len(chunk) * envs_per_task * n_episodes_per_task
+                logging.info(
+                    f"[chunk {chunk_pos}/{total_chunks}] suite={suite_name} "
+                    f"chunk_idx={chunk_idx} tasks={len(chunk)} "
+                    f"(ids {chunk[0]}..{chunk[-1]}) episodes={n_episodes_chunk}"
                 )
 
-            env_cfg = LiberoEnv(
-                task=suite_name,
-                fps=fps,
-                observation_height=observation_height,
-                observation_width=observation_width,
-                is_libero_plus=is_libero_plus,
-            )
-
-            for chunk_idx, chunk in enumerate(chunks):
-                vec_env = make_fat_vec_env(
-                    env_cfg, chunk, n_envs_per_task=envs_per_task
+                info = lerobot_eval_policy(
+                    env=vec_env,
+                    policy=policy,
+                    env_preprocessor=env_preprocessor,
+                    env_postprocessor=env_postprocessor,
+                    preprocessor=preprocessor,
+                    postprocessor=postprocessor,
+                    n_episodes=n_episodes_chunk,
+                    max_episodes_rendered=chunk_max_render,
+                    videos_dir=chunk_videos_dir,
+                    start_seed=seed,
                 )
-                try:
-                    chunk_videos_dir: Path | None = None
-                    chunk_max_render = 0
-                    if videos_dir is not None and rendered < max_episodes_rendered:
-                        chunk_videos_dir = videos_dir / f"{suite_name}_{chunk_idx}"
-                        chunk_max_render = max_episodes_rendered - rendered
-
-                    info = lerobot_eval_policy(
-                        env=vec_env,
-                        policy=policy,
-                        env_preprocessor=env_preprocessor,
-                        env_postprocessor=env_postprocessor,
-                        preprocessor=preprocessor,
-                        postprocessor=postprocessor,
-                        n_episodes=(len(chunk) * envs_per_task * n_episodes_per_task),
-                        max_episodes_rendered=chunk_max_render,
-                        videos_dir=chunk_videos_dir,
-                        start_seed=seed,
+                chunk_succ = [float(ep["success"]) for ep in info["per_episode"]]
+                for ep, s in zip(info["per_episode"], chunk_succ, strict=True):
+                    suite_metrics[suite_name]["successes"].append(s)
+                    suite_metrics[suite_name]["sum_rewards"].append(
+                        float(ep["sum_reward"])
                     )
-                    for ep in info["per_episode"]:
-                        suite_metrics[suite_name]["successes"].append(
-                            float(ep["success"])
-                        )
-                        suite_metrics[suite_name]["sum_rewards"].append(
-                            float(ep["sum_reward"])
-                        )
-                    chunk_videos = info.get("video_paths", [])
-                    if first_video_path is None and chunk_videos:
-                        first_video_path = chunk_videos[0]
-                    rendered += len(chunk_videos)
-                finally:
-                    vec_env.close()
+                chunk_videos = info.get("video_paths", [])
+                if first_video_path is None and chunk_videos:
+                    first_video_path = chunk_videos[0]
+                rendered += len(chunk_videos)
+
+                episodes_done += len(chunk_succ)
+                elapsed = time.monotonic() - t0
+                all_succ_so_far = [
+                    s for m in suite_metrics.values() for s in m["successes"]
+                ]
+                overall_pct = (
+                    100 * sum(all_succ_so_far) / len(all_succ_so_far)
+                    if all_succ_so_far
+                    else float("nan")
+                )
+                eta = (
+                    elapsed / episodes_done * (total_episodes - episodes_done)
+                    if episodes_done
+                    else 0.0
+                )
+                chunk_pct = (
+                    100 * sum(chunk_succ) / len(chunk_succ) if chunk_succ else 0.0
+                )
+                logging.info(
+                    f"  Chunk: {int(sum(chunk_succ))}/{len(chunk_succ)} "
+                    f"({chunk_pct:.1f}%) | "
+                    f"Overall: {int(sum(all_succ_so_far))}/{len(all_succ_so_far)} "
+                    f"({overall_pct:.1f}%) | "
+                    f"Elapsed: {elapsed / 60:.1f}min | ETA: {eta / 60:.1f}min"
+                )
+            finally:
+                vec_env.close()
 
     eval_s = time.monotonic() - t0
 
