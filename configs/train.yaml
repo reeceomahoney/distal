@@ -1,40 +1,12 @@
-job_name: adv-libero-base
-num_workers: 16
-batch_size: 256
-steps: 100_000
-eval_freq: 20_000
+job_name: pi05-remove-pen-lid
+num_workers: 8
+batch_size: 128
+steps: 10_000
+eval_freq: 0
 
 dataset:
-  repo_id: lerobot/libero
+  repo_id: reece-omahoney/remove-pen-lid
   use_imagenet_stats: false
-
-env:
-  type: libero
-  task: libero_10
-  fps: 20
-  observation_height: 256
-  observation_width: 256
-
-# these are overriden when finetuning
-policy:
-  type: advantage
-  fixed_advantage: true
-  num_adv_tokens: 16
-  use_text_advantage: false
-  repo_id: reece-omahoney/adv-libero-base
-  device: cuda
-  chunk_size: 16
-  n_action_steps: 8
-  load_vlm_weights: true
-  resize_imgs_with_padding: [256, 256]
-  max_state_dim: 8
-  max_action_dim: 7
-  scheduler_decay_steps: 100_000
-  compile_model: false
-
-eval:
-  n_episodes: 20
-  batch_size: 0
 
 wandb:
   enable: true

@@ -11,7 +11,8 @@ sudo apt-get update && sudo apt-get install -y \
   libgl1 \
   libglvnd0 \
   libmagickwand-dev \
-  libopengl0
+  libopengl0 \
+  unzip
 
 curl https://mise.run | sh
 echo 'eval "$($HOME/.local/bin/mise activate bash)"' >> ~/.bashrc

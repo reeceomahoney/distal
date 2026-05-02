@@ -5,7 +5,19 @@ _.python.venv = ".venv"
 
 [tasks.train]
 description = "Train base policy"
-run = "lerobot-train --config_path configs/train.yaml"
+run = """
+lerobot-train --config_path configs/train.yaml \
+  --policy.repo_id=reece-omahoney/pi05-remove-pen-lid \
+  --policy.pretrained_path=lerobot/pi05_base \
+  --policy.n_action_steps=10 \
+  --policy.optimizer_lr=1e-4 \
+  --policy.scheduler_decay_lr=1e-4 \
+  --policy.compile_model=true \
+  --policy.gradient_checkpointing=true \
+  --policy.dtype=bfloat16 \
+  --policy.freeze_vision_encoder=true \
+  --policy.train_expert_only=true
+"""
 
 [tasks.eval]
 description = "Evaluate policy in LIBERO sim"
