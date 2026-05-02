@@ -35,8 +35,6 @@ from distal.sim_eval import run_sim_eval
 class EvalLiberoPlusConfig:
     policy_path: str = "reece-omahoney/pistar06-libero-plus-steps"
     n_action_steps: int = 10
-    # Classifier-free guidance scale on the advantage embedding. None keeps
-    # whatever was saved in the policy's config.json.
     cfg_beta: float | None = None
     device: str = "cuda"
     seed: int = 42

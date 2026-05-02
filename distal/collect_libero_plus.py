@@ -57,7 +57,10 @@ def available_cpus() -> int:
                 return max(1, quota_us // period_us)
         except FileNotFoundError:
             pass
-    return len(os.sched_getaffinity(0))
+    sched_getaffinity = getattr(os, "sched_getaffinity", None)
+    if sched_getaffinity is not None:
+        return len(sched_getaffinity(0))
+    return os.cpu_count() or 1
 
 
 def auto_parallel_envs() -> int:

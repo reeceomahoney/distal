@@ -29,7 +29,7 @@ from lerobot.utils.device_utils import get_safe_torch_device
 from lerobot.utils.import_utils import register_third_party_plugins
 from lerobot.utils.random_utils import set_seed
 from lerobot.utils.utils import init_logging
-from libero.libero import benchmark
+from libero.libero import benchmark  # ty: ignore[unresolved-import]
 
 from distal.collect_libero_plus import auto_parallel_envs
 
@@ -134,7 +134,7 @@ def main(cfg: EvalDistConfig):
     )
 
     # ── Rollout ──
-    suite = benchmark.get_benchmark_dict()[suite_name]()  # ty: ignore[unresolved-attribute]
+    suite = benchmark.get_benchmark_dict()[suite_name]()
     n_tasks = len(suite.tasks)
     if cfg.max_tasks is not None:
         n_tasks = min(n_tasks, cfg.max_tasks)
