@@ -10,3 +10,4 @@ robot:
 
 fps: 20
 task: Remove the pen lid
+use_torch_compile: true

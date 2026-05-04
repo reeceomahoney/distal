@@ -39,7 +39,7 @@ description = "Rollout trained policy on physical arm"
 run = """
 lerobot-rollout --config_path configs/rollout.yaml \
   --policy.path=reece-omahoney/pi05-remove-pen-lid \
-  --policy.n_action_steps=20
+  --policy.n_action_steps=20 \
 """
 
 # Cluster
