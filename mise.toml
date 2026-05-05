@@ -6,7 +6,8 @@ _.python.venv = ".venv"
 [tasks.train]
 description = "Train base policy"
 run = """
-lerobot-train --config_path configs/train.yaml \
+accelerate launch --multi_gpu --num_processes=2 \
+  -m lerobot.scripts.lerobot_train --config_path configs/train.yaml \
   --policy.type=pi05 \
   --policy.repo_id=reece-omahoney/pi05-remove-pen-lid \
   --policy.pretrained_path=lerobot/pi05_base \

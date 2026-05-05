@@ -1,6 +1,6 @@
 job_name: pi05-remove-pen-lid
 num_workers: 8
-batch_size: 64
+batch_size: 32
 steps: 20_000
 eval_freq: 0
 
