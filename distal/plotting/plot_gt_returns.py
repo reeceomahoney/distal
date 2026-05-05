@@ -131,16 +131,17 @@ def main() -> None:
 
     step_rewards: dict[int, float] | None = None
     if cfg.reward_mode == "maha":
-        from distal.maha_reward import compute_maha_rewards
+        from distal.maha_reward import load_or_compute_maha_rewards
 
-        print(f"computing maha rewards with {cfg.base_policy} ...")
-        step_rewards = compute_maha_rewards(
+        print(f"loading maha rewards (cache: {cfg.repo_id}) ...")
+        step_rewards = load_or_compute_maha_rewards(
             dataset=dataset,
             policy_path=cfg.base_policy,
             stats_path=cfg.maha_stats_path,
             device=device,
             batch_size=cfg.maha_embed_batch_size,
             num_workers=cfg.maha_embed_num_workers,
+            cache_upload=False,
         )
 
     frame_targets = _build_frame_targets(
