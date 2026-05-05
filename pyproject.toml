@@ -15,7 +15,7 @@ dependencies = [
   "lerobot_policy_pistar06",
   "slurm-tools",
   "vastai-sdk>=0.2.5,<0.3",
-  "skypilot-nightly[vast, kubernetes, runpod, gcp]>=0.8,<=1.0.0.dev20260326",
+  "skypilot[vast, kubernetes, runpod]",
   "runpod>=1.8.2",
   "pyroute2>=0.9.5",
   "pyopengl-accelerate>=3.1.10",
@@ -36,6 +36,7 @@ lerobot_teleoperator_piper = { path = "lerobot_teleoperator_piper", editable = t
 lerobot_policy_pistar06 = { path = "lerobot_policy_pistar06", editable = true }
 slurm-tools = { git = "https://github.com/reeceomahoney/slurm-tools.git" }
 lerobot = { git = "https://github.com/reeceomahoney/lerobot", branch = "distal-libero-plus"}
+skypilot = { git = "https://github.com/reeceomahoney/skypilot.git", branch = "vast-no-geo-pin" }
 # lerobot = { git = "https://github.com/reeceomahoney/lerobot", branch = "distal"}
 
 [tool.hatch.metadata]
