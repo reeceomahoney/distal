@@ -35,6 +35,17 @@ from distal.collect_libero_plus import (
 )
 
 
+def build_task_id_to_base_task(suites: list[str]) -> dict[int, str]:
+    classif = json.loads(
+        (files("libero.libero") / "benchmark" / "task_classification.json").read_text()
+    )
+    return {
+        entry["id"]: base_task_name(entry["name"])
+        for suite_name in suites
+        for entry in classif[suite_name]
+    }
+
+
 def resolve_eval_task_ids(
     suite_name: str,
     per_cell: int,
@@ -98,6 +109,10 @@ def run_sim_eval(
     suite_metrics: dict[str, dict[str, list[float]]] = defaultdict(
         lambda: {"successes": [], "sum_rewards": []}
     )
+    base_task_metrics: dict[str, dict[str, list[float]]] = defaultdict(
+        lambda: {"successes": [], "sum_rewards": []}
+    )
+    task_id_to_base = build_task_id_to_base_task(suites) if is_libero_plus else {}
     plan: list[tuple[str, int, list[int], LiberoEnv, int]] = []
     for suite_name in suites:
         if is_libero_plus:
@@ -171,11 +186,19 @@ def run_sim_eval(
                     start_seed=seed,
                 )
                 chunk_succ = [float(ep["success"]) for ep in info["per_episode"]]
-                for ep, s in zip(info["per_episode"], chunk_succ, strict=True):
+                for i, (ep, s) in enumerate(
+                    zip(info["per_episode"], chunk_succ, strict=True)
+                ):
+                    sum_r = float(ep["sum_reward"])
                     suite_metrics[suite_name]["successes"].append(s)
-                    suite_metrics[suite_name]["sum_rewards"].append(
-                        float(ep["sum_reward"])
-                    )
+                    suite_metrics[suite_name]["sum_rewards"].append(sum_r)
+                    if is_libero_plus:
+                        # Episodes are produced in batch-major order over envs;
+                        # env e in any batch corresponds to chunk[e].
+                        tid = chunk[i % len(chunk)]
+                        base = task_id_to_base[tid]
+                        base_task_metrics[base]["successes"].append(s)
+                        base_task_metrics[base]["sum_rewards"].append(sum_r)
                 chunk_videos = info.get("video_paths", [])
                 if first_video_path is None and chunk_videos:
                     first_video_path = chunk_videos[0]
@@ -236,6 +259,16 @@ def run_sim_eval(
             f"Suite {suite_name}: pc_success={suite_succ:.1f}% "
             f"avg_sum_reward={suite_rew:.3f} (n={len(m['successes'])})"
         )
+    for base, m in base_task_metrics.items():
+        base_succ = (
+            float(np.mean(m["successes"]) * 100) if m["successes"] else float("nan")
+        )
+        base_rew = (
+            float(np.mean(m["sum_rewards"])) if m["sum_rewards"] else float("nan")
+        )
+        metrics[f"pc_success_base_{base}"] = base_succ
+        metrics[f"avg_sum_reward_base_{base}"] = base_rew
+        metrics[f"n_base_{base}"] = float(len(m["successes"]))
     logging.info(
         f"Overall: pc_success={pc_success:.1f}% avg_sum_reward={avg_sum_reward:.3f} "
         f"(n={len(overall_succ)}) eval_s={eval_s:.1f}"

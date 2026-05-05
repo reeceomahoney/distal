@@ -137,6 +137,24 @@ def main(cfg: EvalLiberoPlusConfig):
         json.dump(summary, f, indent=2)
     logging.info(f"Saved summary to {summary_path}")
 
+    base_names = sorted(
+        k[len("pc_success_base_") :]
+        for k in metrics
+        if k.startswith("pc_success_base_")
+    )
+    if base_names:
+        name_w = max(len("base_task"), max(len(b) for b in base_names))
+        logging.info("Per-base-task results:")
+        logging.info(
+            f"  {'base_task':<{name_w}}  {'pc_success':>10}  "
+            f"{'avg_sum_reward':>14}  {'n':>4}"
+        )
+        for base in base_names:
+            pc = metrics[f"pc_success_base_{base}"]
+            rew = metrics[f"avg_sum_reward_base_{base}"]
+            n = int(metrics[f"n_base_{base}"])
+            logging.info(f"  {base:<{name_w}}  {pc:>9.1f}%  {rew:>14.3f}  {n:>4}")
+
 
 if __name__ == "__main__":
     main()
