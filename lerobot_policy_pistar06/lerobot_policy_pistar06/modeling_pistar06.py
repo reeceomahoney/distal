@@ -28,7 +28,7 @@ composition while preserving identical attribute paths so that the
 training script (recap_train_pi_star.py) works without modification.
 
 Two-phase workflow:
-  1. Train a value network with RECAPTrainSmolVLANetwork
+  1. Train a value network via distal/train_value.py
   2. Train PiStar06Policy using pre-computed advantages from the frozen VN
 """
 
@@ -1735,7 +1735,7 @@ class PiStar06Policy(PreTrainedPolicy):
             raise ValueError(
                 "PiStar06 requires pre-computed advantages in "
                 "batch['advantage']. The training script should pre-compute "
-                "these using the SmolVLA value network."
+                "these using the value network."
             )
         adv = batch["advantage"]
         diagnostics: dict[str, float] = {

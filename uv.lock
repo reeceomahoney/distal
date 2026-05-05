@@ -682,7 +682,7 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "future" },
-    { name = "lerobot", extra = ["intelrealsense", "libero", "pi", "smolvla", "training"] },
+    { name = "lerobot", extra = ["intelrealsense", "libero", "pi", "training"] },
     { name = "lerobot-policy-pistar06" },
     { name = "matplotlib" },
     { name = "piper-sdk" },
@@ -711,7 +711,7 @@ hardware = [
 [package.metadata]
 requires-dist = [
     { name = "future", specifier = ">=1.0.0" },
-    { name = "lerobot", extras = ["libero", "pi", "smolvla", "training", "intelrealsense"], git = "https://github.com/reeceomahoney/lerobot?branch=distal-libero-plus" },
+    { name = "lerobot", extras = ["libero", "pi", "training", "intelrealsense"], git = "https://github.com/reeceomahoney/lerobot?branch=distal-libero-plus" },
     { name = "lerobot-policy-pistar06", editable = "lerobot_policy_pistar06" },
     { name = "matplotlib", specifier = ">=3.7.0" },
     { name = "piper-sdk", specifier = ">=0.6.1" },
@@ -754,12 +754,6 @@ sdist = { url = "https://files.pythonhosted.org/packages/8c/8b/57666417c0f90f08b
 wheels = [
     { url = "https://files.pythonhosted.org/packages/ba/5a/18ad964b0086c6e62e2e7500f7edc89e3faa45033c71c1893d34eed2b2de/dnspython-2.8.0-py3-none-any.whl", hash = "sha256:01d9bbc4a2d76bf0db7c1f729812ded6d912bd318d3b1cf81d30c0f845dbf3af", size = 331094, upload-time = "2025-09-07T18:57:58.071Z" },
 ]
-
-[[package]]
-name = "docopt"
-version = "0.6.2"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/a2/55/8f8cab2afd404cf578136ef2cc5dfb50baa1761b68c9da1fb1e4eed343c9/docopt-0.6.2.tar.gz", hash = "sha256:49b3a825280bd66b3aa83585ef59c4a8c82f2c8a522dbe754a8bc8d08c85c491", size = 25901, upload-time = "2014-06-16T11:18:57.406Z" }
 
 [[package]]
 name = "draccus"
@@ -1532,11 +1526,6 @@ pi = [
     { name = "scipy" },
     { name = "transformers" },
 ]
-smolvla = [
-    { name = "accelerate" },
-    { name = "num2words" },
-    { name = "transformers" },
-]
 training = [
     { name = "accelerate" },
     { name = "av" },
@@ -1865,18 +1854,6 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/24/bf/d1bda4f6168e0b2e9e5958945e01910052158313224ada5ce1fb2e1113b8/nodeenv-1.10.0.tar.gz", hash = "sha256:996c191ad80897d076bdfba80a41994c2b47c68e224c542b48feba42ba00f8bb", size = 55611, upload-time = "2025-12-20T14:08:54.006Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/88/b2/d0896bdcdc8d28a7fc5717c305f1a861c26e18c05047949fb371034d98bd/nodeenv-1.10.0-py2.py3-none-any.whl", hash = "sha256:5bb13e3eed2923615535339b3c620e76779af4cb4c6a90deccc9e36b274d3827", size = 23438, upload-time = "2025-12-20T14:08:52.782Z" },
-]
-
-[[package]]
-name = "num2words"
-version = "0.5.14"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "docopt" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/f6/58/ad645bd38b4b648eb2fc2ba1b909398e54eb0cbb6a7dbd2b4953e38c9621/num2words-0.5.14.tar.gz", hash = "sha256:b066ec18e56b6616a3b38086b5747daafbaa8868b226a36127e0451c0cf379c6", size = 218213, upload-time = "2024-12-17T20:17:10.191Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/d6/5b/545e9267a1cc080c8a1be2746113a063e34bcdd0f5173fd665a5c13cb234/num2words-0.5.14-py3-none-any.whl", hash = "sha256:1c8e5b00142fc2966fd8d685001e36c4a9911e070d1b120e1beb721fa1edb33d", size = 163525, upload-time = "2024-12-17T20:17:06.074Z" },
 ]
 
 [[package]]

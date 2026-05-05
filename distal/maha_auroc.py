@@ -16,7 +16,6 @@ from lerobot.configs.policies import PreTrainedConfig
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.policies.factory import make_policy, make_pre_post_processors
 from lerobot.policies.pi05.modeling_pi05 import PI05Policy
-from lerobot.policies.smolvla.modeling_smolvla import SmolVLAPolicy
 from lerobot.utils.device_utils import get_safe_torch_device
 from lerobot.utils.import_utils import register_third_party_plugins
 from lerobot.utils.utils import init_logging
@@ -86,7 +85,7 @@ def main(cfg: MahaAurocConfig):
     policy_cfg.pretrained_path = Path(cfg.policy_path)
     policy_cfg.device = str(device)
     policy = make_policy(cfg=policy_cfg, ds_meta=dataset.meta)
-    assert isinstance(policy, (PI05Policy, SmolVLAPolicy))
+    assert isinstance(policy, PI05Policy)
     policy.eval()
 
     preprocessor, _ = make_pre_post_processors(

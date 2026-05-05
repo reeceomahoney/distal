@@ -20,7 +20,6 @@ from lerobot.configs.policies import PreTrainedConfig
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.policies.factory import make_policy, make_pre_post_processors
 from lerobot.policies.pi05.modeling_pi05 import PI05Policy
-from lerobot.policies.smolvla.modeling_smolvla import SmolVLAPolicy
 from safetensors.numpy import load_file, save_file
 
 from distal.compute_maha_stats import compute_maha_distances
@@ -59,7 +58,7 @@ def compute_maha_rewards(
     policy_cfg.pretrained_path = Path(policy_path)
     policy_cfg.device = str(device)
     policy = make_policy(cfg=policy_cfg, ds_meta=dataset.meta)
-    assert isinstance(policy, (PI05Policy, SmolVLAPolicy))
+    assert isinstance(policy, PI05Policy)
     policy.eval()
     preprocessor, _ = make_pre_post_processors(
         policy_cfg=policy_cfg, pretrained_path=str(policy_cfg.pretrained_path)

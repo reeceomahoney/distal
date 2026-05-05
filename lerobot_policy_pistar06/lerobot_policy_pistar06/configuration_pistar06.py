@@ -24,7 +24,7 @@ class PiStar06Config(PI05Config):
     """Configuration for PiStar06: advantage-conditioned Pi0.5 policy.
 
     Extends PI05Config with RECAP-style advantage conditioning parameters.
-    A frozen SmolVLA value network (trained separately) labels training data
+    A frozen value network (trained separately) labels training data
     with per-sample advantages; a learned embedding injects the binarized
     advantage directly into the action expert's input pathway (embed_suffix).
     """

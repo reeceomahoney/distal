@@ -5,7 +5,7 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.12, <3.13"
 dependencies = [
-  "lerobot[libero, pi, smolvla, training, intelrealsense]",
+  "lerobot[libero, pi, training, intelrealsense]",
   "transformers==5.5.4",
   "piper-sdk>=0.6.1",
   "matplotlib>=3.7.0",

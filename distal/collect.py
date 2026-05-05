@@ -23,7 +23,6 @@ from lerobot.envs.configs import LiberoEnv as LiberoEnvConfig
 from lerobot.envs.factory import make_env, make_env_pre_post_processors
 from lerobot.policies.factory import make_policy, make_pre_post_processors
 from lerobot.policies.pi05.modeling_pi05 import PI05Policy
-from lerobot.policies.smolvla.modeling_smolvla import SmolVLAPolicy
 from lerobot.scripts.lerobot_eval import eval_policy as lerobot_eval_policy
 from lerobot.utils.device_utils import get_safe_torch_device
 from lerobot.utils.import_utils import register_third_party_plugins
@@ -106,7 +105,7 @@ def main(cfg: EvalDistConfig):
     policy_cfg.n_action_steps = 10  # ty: ignore[unresolved-attribute]
 
     policy = make_policy(cfg=policy_cfg, env_cfg=env_cfg)
-    assert isinstance(policy, (PI05Policy, SmolVLAPolicy))
+    assert isinstance(policy, PI05Policy)
     policy.eval()
 
     preprocessor, postprocessor = make_pre_post_processors(

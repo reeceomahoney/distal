@@ -5,9 +5,9 @@ code in this repository.
 
 ## Project Overview
 
-DistAL: a RECAP-style RL pipeline for fine-tuning VLAs (Pi0.5 / SmolVLA) with
-advantage conditioning and Mahalanobis-distance-based rewards, built on a fork
-of HuggingFace LeRobot. Primary evaluation target is LIBERO simulation; also
+DistAL: a RECAP-style RL pipeline for fine-tuning Pi0.5 with advantage
+conditioning and Mahalanobis-distance-based rewards, built on a fork of
+HuggingFace LeRobot. Primary evaluation target is LIBERO simulation; also
 supports a physical Piper arm.
 
 **Python 3.12** (`>=3.12,<3.13`). **uv** package manager (frozen `uv.lock`),
@@ -106,7 +106,7 @@ auto-set to a per-task percentile during training), `advantage_dropout` (CFG).
 
 - `value_model.py` — `RECAPValueNetwork` (SmolVLM + expert backbone, value query
   token, categorical head over discretized return bins).
-- `embedding.py` — Mean-pooled VLM prefix embeddings for both PI05 and SmolVLA.
+- `embedding.py` — Mean-pooled VLM prefix embeddings for PI05.
 - `maha_reward.py` — Loads stats from `compute_maha_stats.py`, computes per-
   frame Mahalanobis distances on a value-training dataset, min-max normalizes to
   `[-1, 0]` for use as per-step rewards.
@@ -116,7 +116,6 @@ auto-set to a per-task percentile during training), `advantage_dropout` (CFG).
   Hub-mirrored.
 - `eval_guidance.py` — Sweeps classifier-free guidance scales by shelling out to
   `lerobot-eval`.
-- `rollout_value_viz.py` — Rollout + Rerun visualization with value estimates.
 - `push_to_hub.py` — Upload checkpoints / value networks to HF Hub.
 - `plotting/` — Diagnostic scripts: `debug_maha_rewards.py`,
   `plot_gt_returns.py`. `plot_gt_returns.py` mirrors the exact reward/return
@@ -138,7 +137,7 @@ locally only when working on hardware.
 
 YAML configs drive workflows via draccus / LeRobot config parsers:
 
-- `train.yaml` — base SmolVLA training (`mise run train`).
+- `train.yaml` — base Pi0.5 training (`mise run train`).
 - `eval.yaml` — LIBERO eval; **policy args must come from CLI**, e.g.
   `mise run eval` overrides `--policy.path` and `--policy.n_action_steps`.
 - `sky.yaml` / `sky-ssh.yaml` — SkyPilot launch configs (Vast / generic SSH),
