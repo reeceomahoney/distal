@@ -647,27 +647,6 @@ wheels = [
 ]
 
 [[package]]
-name = "decorator"
-version = "5.2.1"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/43/fa/6d96a0978d19e17b68d634497769987b16c8f4cd0a7a05048bec693caa6b/decorator-5.2.1.tar.gz", hash = "sha256:65f266143752f734b0a7cc83c46f4618af75b8c5911b00ccb61d0ac9b6da0360", size = 56711, upload-time = "2025-02-24T04:41:34.073Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/4e/8c/f3147f5c4b73e7550fe5f9352eaa956ae838d5c51eb58e7a25b9f3e2643b/decorator-5.2.1-py3-none-any.whl", hash = "sha256:d316bb415a2d9e2d2b3abcc4084c6502fc09240e292cd76a76afc106a1c8e04a", size = 9190, upload-time = "2025-02-24T04:41:32.565Z" },
-]
-
-[[package]]
-name = "deprecated"
-version = "1.3.1"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "wrapt" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/49/85/12f0a49a7c4ffb70572b6c2ef13c90c88fd190debda93b23f026b25f9634/deprecated-1.3.1.tar.gz", hash = "sha256:b1b50e0ff0c1fddaa5708a2c6b0a6588bb09b892825ab2b214ac9ea9d92a5223", size = 2932523, upload-time = "2025-10-30T08:19:02.757Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/84/d0/205d54408c08b13550c733c4b85429e7ead111c7f0014309637425520a9a/deprecated-1.3.1-py2.py3-none-any.whl", hash = "sha256:597bfef186b6f60181535a29fbe44865ce137a5079f295b479886c82729d5f3f", size = 11298, upload-time = "2025-10-30T08:19:00.758Z" },
-]
-
-[[package]]
 name = "dill"
 version = "0.4.1"
 source = { registry = "https://pypi.org/simple" }
@@ -682,7 +661,7 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "future" },
-    { name = "lerobot", extra = ["intelrealsense", "libero", "pi", "training"] },
+    { name = "lerobot", extra = ["libero", "pi", "training"] },
     { name = "lerobot-policy-pistar06" },
     { name = "matplotlib" },
     { name = "piper-sdk" },
@@ -704,6 +683,7 @@ dev = [
     { name = "ty" },
 ]
 hardware = [
+    { name = "lerobot", extra = ["intelrealsense"] },
     { name = "lerobot-robot-piper" },
     { name = "lerobot-teleoperator-piper" },
 ]
@@ -711,7 +691,7 @@ hardware = [
 [package.metadata]
 requires-dist = [
     { name = "future", specifier = ">=1.0.0" },
-    { name = "lerobot", extras = ["libero", "pi", "training", "intelrealsense"], git = "https://github.com/reeceomahoney/lerobot?branch=distal-libero-plus" },
+    { name = "lerobot", extras = ["libero", "pi", "training"], git = "https://github.com/reeceomahoney/lerobot?branch=distal-libero-plus" },
     { name = "lerobot-policy-pistar06", editable = "lerobot_policy_pistar06" },
     { name = "matplotlib", specifier = ">=3.7.0" },
     { name = "piper-sdk", specifier = ">=0.6.1" },
@@ -733,6 +713,7 @@ dev = [
     { name = "ty", specifier = ">=0.0.21" },
 ]
 hardware = [
+    { name = "lerobot", extras = ["intelrealsense"], git = "https://github.com/reeceomahoney/lerobot?branch=distal-libero-plus" },
     { name = "lerobot-robot-piper", editable = "lerobot_robot_piper" },
     { name = "lerobot-teleoperator-piper", editable = "lerobot_teleoperator_piper" },
 ]
@@ -832,21 +813,6 @@ name = "evdev"
 version = "1.9.3"
 source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/a5/f5/397b61091120a9ca5001041dd7bf76c385b3bfd67a0e5bcb74b852bd22a4/evdev-1.9.3.tar.gz", hash = "sha256:2c140e01ac8437758fa23fe5c871397412461f42d421aa20241dc8fe8cfccbc9", size = 32723, upload-time = "2026-02-05T21:54:24.987Z" }
-
-[[package]]
-name = "fabric"
-version = "3.2.3"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "decorator" },
-    { name = "deprecated" },
-    { name = "invoke" },
-    { name = "paramiko" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/e3/7e/29cd6237c3b7ce79c3ca945eb99ab5affd101db54b2f7a78dde0cfa19fd4/fabric-3.2.3.tar.gz", hash = "sha256:dcbd2c47ad87688facaef5cc11aab6d1ec9ed05645fed97a5de7204d5d17cc44", size = 183497, upload-time = "2026-04-06T00:00:11.481Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/37/f9/f8497ef8b873a8bb2a750ee2a6c5f0fc22258e1acb6245fd237042a6c279/fabric-3.2.3-py3-none-any.whl", hash = "sha256:ce61917f4f398018337ce279b357650a3a74baecf3fdd53a5839013944af965e", size = 59502, upload-time = "2026-04-06T00:00:10.176Z" },
-]
 
 [[package]]
 name = "farama-notifications"
@@ -3271,10 +3237,9 @@ vast = [
 [[package]]
 name = "slurm-tools"
 version = "0.1.0"
-source = { git = "https://github.com/reeceomahoney/slurm-tools.git#c4b40ca0e90a40d3609ecc14b3fea0e9e4380d35" }
+source = { git = "https://github.com/reeceomahoney/slurm-tools.git#5ef285d84e744755465a4d0ef4b641c603c10edd" }
 dependencies = [
     { name = "draccus" },
-    { name = "fabric" },
     { name = "flask" },
 ]
 
