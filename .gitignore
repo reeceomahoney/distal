@@ -14,3 +14,6 @@ outputs
 container.sif
 skypilot/
 lerobot/
+# pixi environments
+.pixi/*
+!.pixi/config.toml

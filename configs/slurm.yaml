@@ -12,12 +12,21 @@ envs:
   - WANDB_API_KEY
   - HF_TOKEN
 command: |-
+  # modules and env vars
+  module load cuda/12.6
   export OPENBLAS_NUM_THREADS=8
   export OMP_NUM_THREADS=8
   export MKL_NUM_THREADS=8
 
+  # install uv and pixi
   curl -LsSf https://astral.sh/uv/install.sh | sh
-  export PATH="$HOME/.local/bin:$PATH"
+  curl -fsSL https://pixi.sh/install.sh | bash
+  export PATH="$HOME/.local/bin:$HOME/.pixi/bin:$PWD/.pixi/envs/default/bin:$PATH"
 
+  # install packacges
   uv sync
+  pixi install
+  export LD_LIBRARY_PATH="$PWD/.pixi/envs/default/lib:$LD_LIBRARY_PATH"
+
+  # run command
   uv run distal/train_value.py
