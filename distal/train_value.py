@@ -24,7 +24,7 @@ import logging
 import math
 import random
 import time
-from collections.abc import Callable
+from collections.abc import Iterator
 from dataclasses import asdict, dataclass
 from datetime import datetime
 from pathlib import Path
@@ -88,18 +88,16 @@ class RECAPValueTrainingConfig:
     val_split_ratio: float = 0.1
     seed: int = 42
     device: str = "auto"
-    max_val_steps_per_epoch: int | None = None
     log_every_n_steps: int = 100
-    validate_every_n_train_steps: int = 50
     plot_every_n_train_steps: int = 200
-    max_val_steps_per_step_validation: int | None = 20
+    max_val_steps: int | None = 20
     val_plot_num_episodes: int = 4
     val_plot_num_frames: int = 8
 
-    # Early stopping (set patience to None to disable). Patience is in
-    # validation events; with validate_every_n_train_steps=50 the default
-    # patience=40 ≈ 2000 train steps without improvement.
-    early_stopping_patience: int | None = 40
+    # Early stopping is counted in validation events, which now coincide with
+    # log steps. With log_every_n_steps=100 and patience=20, that is ~2000
+    # train steps without improvement.
+    early_stopping_patience: int | None = 20
     early_stopping_min_delta: float = 0.001
 
     # Value target construction
@@ -757,86 +755,89 @@ def _init_wandb(cfg: RECAPValueTrainingConfig) -> Any:
     return run
 
 
-def _run_epoch(
+def cycle(loader: DataLoader) -> Iterator[dict]:
+    while True:
+        for batch in loader:
+            yield batch
+
+
+def train_step(
+    model: RECAPValueNetwork,
+    batch: dict,
+    preprocessor: Any,
+    optimizer: torch.optim.Optimizer,
+    scheduler: torch.optim.lr_scheduler.LambdaLR | None,
+    max_grad_norm: float,
+) -> dict[str, float]:
+    batch = _preprocess_batch(batch, preprocessor)
+    # Strip non-tensor entries (e.g. raw "task" strings) so torch.compile's
+    # dynamo doesn't specialize on their values and recompile per task.
+    model_batch = {k: v for k, v in batch.items() if isinstance(v, torch.Tensor)}
+
+    loss, outputs = model(model_batch)
+    loss.backward()
+    if max_grad_norm > 0:
+        torch.nn.utils.clip_grad_norm_(model.parameters(), max_grad_norm)
+    optimizer.step()
+    optimizer.zero_grad(set_to_none=True)
+    if scheduler is not None:
+        scheduler.step()
+
+    with torch.no_grad():
+        pred_bins = outputs["value_logits"].argmax(dim=-1)
+        expected_value = outputs["expected_value"].squeeze(-1)
+        acc = (pred_bins == batch["target_bin"]).float().mean()
+        mae = torch.abs(expected_value - batch["target_value"]).mean()
+
+    return {
+        "loss": float(loss.item()),
+        "bin_acc": float(acc.item()),
+        "value_mae": float(mae.item()),
+    }
+
+
+def validate(
     model: RECAPValueNetwork,
     loader: DataLoader,
     preprocessor: Any,
-    device: torch.device,
-    optimizer: torch.optim.Optimizer | None,
-    max_grad_norm: float,
-    pass_index: int,
-    total_train_steps: int,
     max_steps: int | None = None,
-    log_every_n_steps: int = 0,
-    on_train_step_end: Callable[[int], bool] | None = None,
     collect_episode_ids: set[int] | None = None,
     value_bin_support: torch.Tensor | None = None,
     collected_predictions: dict[int, list[ValidationFramePrediction]] | None = None,
-    wandb_run: Any = None,
-    global_step_offset: int = 0,
-    scheduler: torch.optim.lr_scheduler.LambdaLR | None = None,
 ) -> dict[str, float]:
-    training = optimizer is not None
-    model.train(mode=training)
-    phase = "train" if training else "val"
-    if log_every_n_steps < 0:
-        raise ValueError(f"log_every_n_steps must be >= 0, got {log_every_n_steps}")
-
-    total_loss = 0.0
-    total_mae = 0.0
-    total_acc = 0.0
-    total_samples = 0
-    total_steps = len(loader)
-    if max_steps is not None:
-        total_steps = min(total_steps, max_steps)
-
-    window_loss = 0.0
-    window_mae = 0.0
-    window_acc = 0.0
-    window_samples = 0
-    window_steps = 0
-    epoch_start_time = time.perf_counter()
-    window_start_time = epoch_start_time
-
-    if training and optimizer is not None:
-        optimizer.zero_grad(set_to_none=True)
-
     # Need this to prevent hanging
     _default_decoder_cache.clear()
 
-    for step, batch in enumerate(loader):
-        if max_steps is not None and step >= max_steps:
-            break
-        step_num = step + 1
+    total_loss = 0.0
+    total_acc = 0.0
+    total_mae = 0.0
+    total_samples = 0
 
-        batch = _preprocess_batch(batch, preprocessor)
-        # Strip non-tensor entries (e.g. raw "task" strings) so torch.compile's
-        # dynamo doesn't specialize on their values and recompile per task.
-        model_batch = {k: v for k, v in batch.items() if isinstance(v, torch.Tensor)}
+    with torch.no_grad():
+        for step, batch in enumerate(loader):
+            if max_steps is not None and step >= max_steps:
+                break
 
-        forward_ctx = torch.enable_grad() if training else torch.no_grad()
-        with forward_ctx:
+            batch = _preprocess_batch(batch, preprocessor)
+            model_batch = {
+                k: v for k, v in batch.items() if isinstance(v, torch.Tensor)
+            }
+
             loss, outputs = model(model_batch)
-        value_logits = outputs["value_logits"]
-        expected_value = outputs["expected_value"].squeeze(-1)
+            value_logits = outputs["value_logits"]
+            expected_value = outputs["expected_value"].squeeze(-1)
 
-        if training:
-            assert optimizer is not None
-            loss.backward()
-            if max_grad_norm > 0:
-                torch.nn.utils.clip_grad_norm_(model.parameters(), max_grad_norm)
-            optimizer.step()
-            optimizer.zero_grad(set_to_none=True)
-            if scheduler is not None:
-                scheduler.step()
-
-        with torch.no_grad():
             batch_size = batch["target_bin"].shape[0]
             pred_bins = value_logits.argmax(dim=-1)
             acc = (pred_bins == batch["target_bin"]).float().mean()
             mae = torch.abs(expected_value - batch["target_value"]).mean()
 
-            if not training and collected_predictions is not None:
+            total_loss += float(loss.item()) * batch_size
+            total_acc += float(acc.item()) * batch_size
+            total_mae += float(mae.item()) * batch_size
+            total_samples += batch_size
+
+            if collected_predictions is not None:
                 probs = outputs["value_probs"].detach()
                 if value_bin_support is None:
                     support = torch.linspace(
@@ -872,95 +873,12 @@ def _run_epoch(
                         prediction
                     )
 
-            total_loss += float(loss.item()) * batch_size
-            total_acc += float(acc.item()) * batch_size
-            total_mae += float(mae.item()) * batch_size
-            total_samples += batch_size
-            window_loss += float(loss.item()) * batch_size
-            window_acc += float(acc.item()) * batch_size
-            window_mae += float(mae.item()) * batch_size
-            window_samples += batch_size
-            window_steps += 1
-
-        should_log_step = (
-            log_every_n_steps > 0
-            and window_samples > 0
-            and (
-                step_num == 1
-                or step_num % log_every_n_steps == 0
-                or (total_steps > 0 and step_num == total_steps)
-            )
-        )
-        if should_log_step:
-            now = time.perf_counter()
-            elapsed = max(now - epoch_start_time, 1e-9)
-            window_elapsed = max(now - window_start_time, 1e-9)
-            avg_loss = total_loss / total_samples
-            avg_acc = total_acc / total_samples
-            avg_mae = total_mae / total_samples
-            window_loss_avg = window_loss / window_samples
-            window_acc_avg = window_acc / window_samples
-            window_mae_avg = window_mae / window_samples
-            avg_sec_per_step = elapsed / max(step_num, 1)
-            steps_per_sec = window_steps / window_elapsed
-            samples_per_sec = window_samples / window_elapsed
-            eta_seconds = avg_sec_per_step * max(total_steps - step_num, 0)
-            progress = (
-                f"{step_num}/{total_steps}" if total_steps > 0 else f"{step_num}/?"
-            )
-
-            global_step = global_step_offset + step_num
-            logging.info(
-                f"[pass {pass_index}][{phase}] pass_step={progress} "
-                f"global_step={global_step}/{total_train_steps} "
-                f"loss={window_loss_avg:.5f} acc={window_acc_avg:.4f} "
-                f"mae={window_mae_avg:.5f} avg_loss={avg_loss:.5f} "
-                f"avg_acc={avg_acc:.4f} avg_mae={avg_mae:.5f} "
-                f"it/s={steps_per_sec:.2f} samples/s={samples_per_sec:.2f} "
-                f"elapsed={_format_duration(elapsed)} "
-                f"eta={_format_duration(eta_seconds)}"
-            )
-            if wandb_run is not None:
-                wb_step = global_step_offset + step_num
-                wb_prefix = "train" if training else "val"
-                wandb_run.log(
-                    {
-                        f"{wb_prefix}/loss": avg_loss,
-                        f"{wb_prefix}/bin_acc": avg_acc,
-                        f"{wb_prefix}/value_mae": avg_mae,
-                        f"{wb_prefix}/window_loss": window_loss_avg,
-                        f"{wb_prefix}/window_bin_acc": window_acc_avg,
-                        f"{wb_prefix}/window_value_mae": window_mae_avg,
-                        f"{wb_prefix}/samples_per_sec": samples_per_sec,
-                        "global_step": wb_step,
-                    },
-                    step=wb_step,
-                )
-            window_loss = 0.0
-            window_mae = 0.0
-            window_acc = 0.0
-            window_samples = 0
-            window_steps = 0
-            window_start_time = now
-
-        if training and on_train_step_end is not None:
-            callback_start_time = time.perf_counter()
-            should_stop = on_train_step_end(step_num)
-            callback_elapsed = time.perf_counter() - callback_start_time
-            # Keep throughput metrics focused on training work (exclude
-            # callback wall time).
-            epoch_start_time += callback_elapsed
-            window_start_time += callback_elapsed
-            if should_stop:
-                break
-
     if total_samples == 0:
         return {
             "loss": float("nan"),
             "bin_acc": float("nan"),
             "value_mae": float("nan"),
         }
-
     return {
         "loss": total_loss / total_samples,
         "bin_acc": total_acc / total_samples,
@@ -1079,14 +997,6 @@ def run_recap_value_train_val(cfg: RECAPValueTrainingConfig) -> None:
     val_loader = DataLoader(
         val_dataset,
         batch_size=cfg.batch_size,
-        shuffle=False,
-        num_workers=cfg.num_workers,
-        pin_memory=(device.type == "cuda"),
-        drop_last=False,
-    )
-    step_val_loader = DataLoader(
-        val_dataset,
-        batch_size=cfg.batch_size,
         shuffle=True,
         num_workers=0,
         pin_memory=(device.type == "cuda"),
@@ -1140,10 +1050,6 @@ def run_recap_value_train_val(cfg: RECAPValueTrainingConfig) -> None:
         f"train_steps={cfg.train_steps}"
     )
 
-    best_val_mae = float("inf")
-    patience_counter = 0
-    should_stop = False
-    history: list[dict] = []
     plot_episode_ids = _select_validation_plot_episode_ids(
         frame_targets=val_targets,
         max_episodes=cfg.val_plot_num_episodes,
@@ -1176,37 +1082,33 @@ def run_recap_value_train_val(cfg: RECAPValueTrainingConfig) -> None:
         f"{len(set(t.episode_index for t in val_targets))} val episodes."
     )
 
-    if cfg.validate_every_n_train_steps < 0:
-        raise ValueError(
-            "validate_every_n_train_steps must be >= 0, got "
-            f"{cfg.validate_every_n_train_steps}"
-        )
+    if cfg.log_every_n_steps <= 0:
+        raise ValueError(f"log_every_n_steps must be > 0, got {cfg.log_every_n_steps}")
     if cfg.plot_every_n_train_steps < 0:
         raise ValueError(
             f"plot_every_n_train_steps must be >= 0, got {cfg.plot_every_n_train_steps}"
         )
-    if (
-        cfg.max_val_steps_per_step_validation is not None
-        and cfg.max_val_steps_per_step_validation <= 0
-    ):
+    if cfg.max_val_steps is not None and cfg.max_val_steps <= 0:
         raise ValueError(
-            "max_val_steps_per_step_validation must be > 0 when provided, "
-            f"got {cfg.max_val_steps_per_step_validation}"
+            f"max_val_steps must be > 0 when provided, got {cfg.max_val_steps}"
         )
     if cfg.plot_every_n_train_steps > 0 and cfg.val_plot_num_episodes <= 0:
         logging.warning(
             "plot_every_n_train_steps is set but val_plot_num_episodes <= 0, "
-            "so step-based plotting is disabled."
+            "so plotting is disabled."
         )
 
-    def _save_checkpoint_and_check_early_stop(
+    best_val_mae = float("inf")
+    patience_counter = 0
+    history: list[dict] = []
+
+    def save_checkpoint_and_check_early_stop(
         val_metrics: dict[str, float],
         trigger_tag: str,
-        saved_metrics: dict | None = None,
+        saved_metrics: dict,
     ) -> bool:
         """Save last/best checkpoints; return True iff early stopping should fire."""
         nonlocal best_val_mae, patience_counter
-        metrics_to_save = saved_metrics if saved_metrics is not None else val_metrics
 
         last_dir = checkpoints_dir / "last"
         last_dir.mkdir(parents=True, exist_ok=True)
@@ -1214,7 +1116,7 @@ def run_recap_value_train_val(cfg: RECAPValueTrainingConfig) -> None:
         preprocessor.save_pretrained(
             last_dir, config_filename="policy_preprocessor.json"
         )
-        _save_json(last_dir / "metrics.json", metrics_to_save)
+        _save_json(last_dir / "metrics.json", saved_metrics)
         _save_json(last_dir / "train_config.json", asdict(cfg))
 
         val_mae = val_metrics.get("value_mae", float("nan"))
@@ -1230,7 +1132,7 @@ def run_recap_value_train_val(cfg: RECAPValueTrainingConfig) -> None:
             preprocessor.save_pretrained(
                 best_dir, config_filename="policy_preprocessor.json"
             )
-            _save_json(best_dir / "metrics.json", metrics_to_save)
+            _save_json(best_dir / "metrics.json", saved_metrics)
             _save_json(best_dir / "train_config.json", asdict(cfg))
             logging.info(
                 f"[{trigger_tag}] New best val_mae={val_mae:.5f}; "
@@ -1255,114 +1157,69 @@ def run_recap_value_train_val(cfg: RECAPValueTrainingConfig) -> None:
             return True
         return False
 
-    def _run_validation_and_maybe_plot(
-        *,
-        pass_index: int,
-        trigger_tag: str,
-        max_steps: int | None,
-        plot_subdir: str | None,
-        loader: DataLoader,
+    def run_validation_and_maybe_plot(
+        global_step: int, do_plot: bool
     ) -> dict[str, float]:
-        should_plot = (
-            bool(plot_subdir) and bool(plot_episode_ids) and val_plot_loader is not None
-        )
         try:
-            val_metrics_local = _run_epoch(
+            val_metrics = validate(
                 model=model,
-                loader=loader,
+                loader=val_loader,
                 preprocessor=preprocessor,
-                device=device,
-                optimizer=None,
-                max_grad_norm=max_grad_norm,
-                pass_index=pass_index,
-                total_train_steps=cfg.train_steps,
-                max_steps=max_steps,
-                log_every_n_steps=cfg.log_every_n_steps,
-                collect_episode_ids=None,
+                max_steps=cfg.max_val_steps,
                 value_bin_support=model.value_bin_support,
-                collected_predictions=None,
             )
         except Exception as error:  # noqa: BLE001
-            if loader is step_val_loader or not _is_known_video_validation_error(error):
+            if not _is_known_video_validation_error(error):
                 raise
             logging.warning(
-                f"[{trigger_tag}] Validation failed with video worker "
-                "decoding/timestamp issue; retrying with num_workers=0."
+                f"[step {global_step}] Validation skipped due to persistent "
+                f"video decoding/timestamp errors: {error}"
             )
-            try:
-                collected_predictions = {} if should_plot else None
-                val_metrics_local = _run_epoch(
-                    model=model,
-                    loader=step_val_loader,
-                    preprocessor=preprocessor,
-                    device=device,
-                    optimizer=None,
-                    max_grad_norm=max_grad_norm,
-                    pass_index=pass_index,
-                    total_train_steps=cfg.train_steps,
-                    max_steps=max_steps,
-                    log_every_n_steps=cfg.log_every_n_steps,
-                    collect_episode_ids=None,
-                    value_bin_support=model.value_bin_support,
-                    collected_predictions=None,
-                )
-            except Exception as retry_error:  # noqa: BLE001
-                if not _is_known_video_validation_error(retry_error):
-                    raise
-                logging.warning(
-                    f"[{trigger_tag}] Validation skipped due to persistent "
-                    f"video decoding/timestamp errors: {retry_error}"
-                )
-                return {
-                    "loss": float("nan"),
-                    "bin_acc": float("nan"),
-                    "value_mae": float("nan"),
-                }
+            return {
+                "loss": float("nan"),
+                "bin_acc": float("nan"),
+                "value_mae": float("nan"),
+            }
+
         logging.info(
-            f"[{trigger_tag}] "
-            f"val_loss={val_metrics_local['loss']:.5f} "
-            f"val_acc={val_metrics_local['bin_acc']:.4f} "
-            f"val_mae={val_metrics_local['value_mae']:.5f}"
+            f"[step {global_step}/{cfg.train_steps}] "
+            f"val_loss={val_metrics['loss']:.5f} "
+            f"val_acc={val_metrics['bin_acc']:.4f} "
+            f"val_mae={val_metrics['value_mae']:.5f}"
         )
         if wandb_run is not None:
             wandb_run.log(
                 {
-                    "val/loss": val_metrics_local["loss"],
-                    "val/bin_acc": val_metrics_local["bin_acc"],
-                    "val/value_mae": val_metrics_local["value_mae"],
-                    "global_step": global_train_step,
+                    "val/loss": val_metrics["loss"],
+                    "val/bin_acc": val_metrics["bin_acc"],
+                    "val/value_mae": val_metrics["value_mae"],
+                    "global_step": global_step,
                 },
-                step=global_train_step,
+                step=global_step,
             )
 
-        if should_plot and plot_subdir is not None and val_plot_loader is not None:
-            logging.info(f"[{trigger_tag}] Running plot pass ...")
+        if do_plot and plot_episode_ids and val_plot_loader is not None:
             collected_predictions: dict[int, list[ValidationFramePrediction]] = {}
             try:
-                _run_epoch(
+                validate(
                     model=model,
                     loader=val_plot_loader,
                     preprocessor=preprocessor,
-                    device=device,
-                    optimizer=None,
-                    max_grad_norm=max_grad_norm,
-                    pass_index=pass_index,
-                    total_train_steps=cfg.train_steps,
                     max_steps=None,
-                    log_every_n_steps=0,
                     collect_episode_ids=plot_episode_id_set,
                     value_bin_support=model.value_bin_support,
                     collected_predictions=collected_predictions,
                 )
             except Exception as error:  # noqa: BLE001
-                if _is_known_video_validation_error(error):
-                    logging.warning(
-                        f"[{trigger_tag}] Plot generation skipped due to "
-                        f"video decode/timestamp issue: {error}"
-                    )
-                    return val_metrics_local
-                raise
-            plot_dir = output_dir / "validation_plots" / plot_subdir
+                if not _is_known_video_validation_error(error):
+                    raise
+                logging.warning(
+                    f"[step {global_step}] Plot generation skipped due to "
+                    f"video decode/timestamp issue: {error}"
+                )
+                return val_metrics
+
+            plot_dir = output_dir / "validation_plots" / f"step_{global_step:08d}"
             saved_paths: list[Path] = []
             for episode_index in plot_episode_ids:
                 episode_predictions = collected_predictions.get(episode_index, [])
@@ -1380,7 +1237,7 @@ def run_recap_value_train_val(cfg: RECAPValueTrainingConfig) -> None:
                     saved_paths.append(plot_path)
             if saved_paths:
                 logging.info(
-                    f"[{trigger_tag}] Saved {len(saved_paths)} validation "
+                    f"[step {global_step}] Saved {len(saved_paths)} validation "
                     f"plot(s) under {plot_dir}"
                 )
                 if wandb_run is not None:
@@ -1392,163 +1249,108 @@ def run_recap_value_train_val(cfg: RECAPValueTrainingConfig) -> None:
                         )
                         for p in saved_paths
                     }
-                    wandb_run.log(plot_images, step=global_train_step)
+                    wandb_run.log(plot_images, step=global_step)
 
-        return val_metrics_local
+        return val_metrics
 
-    global_train_step = 0
-    data_pass = 0
+    # Need this to prevent hanging
+    _default_decoder_cache.clear()
 
-    while global_train_step < cfg.train_steps:
-        data_pass += 1
-        steps_remaining = cfg.train_steps - global_train_step
+    train_iter = cycle(train_loader)
+    model.train()
+    optimizer.zero_grad(set_to_none=True)
 
-        on_train_step_end: Callable[[int], bool] | None = None
-        if cfg.validate_every_n_train_steps > 0 or cfg.plot_every_n_train_steps > 0:
-            step_val_max_steps = cfg.max_val_steps_per_step_validation
+    start_time = time.perf_counter()
+    last_log_step = 0
+    last_log_time = start_time
 
-            def _on_train_step_end(step_num: int) -> bool:
-                nonlocal global_train_step, should_stop
-                global_train_step += 1
-                should_validate_now = (
-                    cfg.validate_every_n_train_steps > 0
-                    and global_train_step % cfg.validate_every_n_train_steps == 0
-                )
-                should_plot_now = (
-                    cfg.plot_every_n_train_steps > 0
-                    and global_train_step % cfg.plot_every_n_train_steps == 0
-                    and bool(plot_episode_ids)
-                )
-                if should_plot_now:
-                    should_validate_now = True
-                if not should_validate_now:
-                    return False
-
-                trigger = (
-                    f"step-validate "
-                    f"(global_step={global_train_step}/{cfg.train_steps}, "
-                    f"data_pass={data_pass}, pass_step={step_num})"
-                )
-                step_val_metrics = _run_validation_and_maybe_plot(
-                    pass_index=data_pass,
-                    trigger_tag=trigger,
-                    max_steps=step_val_max_steps,
-                    plot_subdir=f"step_{global_train_step:08d}"
-                    if should_plot_now
-                    else None,
-                    loader=step_val_loader,
-                )
-                should_stop = _save_checkpoint_and_check_early_stop(
-                    val_metrics=step_val_metrics,
-                    trigger_tag=trigger,
-                    saved_metrics={
-                        "global_step": global_train_step,
-                        "data_pass": data_pass,
-                        "pass_step": step_num,
-                        "val_loss": step_val_metrics["loss"],
-                        "val_bin_acc": step_val_metrics["bin_acc"],
-                        "val_value_mae": step_val_metrics["value_mae"],
-                    },
-                )
-                return should_stop
-
-            on_train_step_end = _on_train_step_end
-
-        train_metrics = _run_epoch(
+    for global_step in range(1, cfg.train_steps + 1):
+        batch = next(train_iter)
+        train_metrics = train_step(
             model=model,
-            loader=train_loader,
+            batch=batch,
             preprocessor=preprocessor,
-            device=device,
             optimizer=optimizer,
-            max_grad_norm=max_grad_norm,
-            pass_index=data_pass,
-            total_train_steps=cfg.train_steps,
-            max_steps=steps_remaining,
-            log_every_n_steps=cfg.log_every_n_steps,
-            on_train_step_end=on_train_step_end,
-            wandb_run=wandb_run,
-            global_step_offset=global_train_step,
             scheduler=scheduler,
+            max_grad_norm=max_grad_norm,
         )
-        if should_stop:
-            logging.info(
-                f"[step {global_train_step}/{cfg.train_steps}] "
-                "Early stopping triggered."
-            )
-            break
 
-        if global_train_step < cfg.train_steps:
-            # Mid-training pass-end summary; skip the heavyweight epoch-end
-            # validation since step-validation already runs on a cadence.
-            logging.info(
-                f"[data_pass={data_pass} step={global_train_step}/{cfg.train_steps}] "
-                f"train_loss={train_metrics['loss']:.5f} "
-                f"train_acc={train_metrics['bin_acc']:.4f} "
-                f"train_mae={train_metrics['value_mae']:.5f}"
-            )
-            history.append(
-                {
-                    "data_pass": data_pass,
-                    "global_step": global_train_step,
-                    "train_loss": train_metrics["loss"],
-                    "train_bin_acc": train_metrics["bin_acc"],
-                    "train_value_mae": train_metrics["value_mae"],
-                    "lr": optimizer.param_groups[0]["lr"],
-                }
-            )
-            _save_json(output_dir / "metrics_history.json", history)
+        is_log_step = (
+            global_step == 1
+            or global_step % cfg.log_every_n_steps == 0
+            or global_step == cfg.train_steps
+        )
+        if not is_log_step:
             continue
 
-        # Final pass: run a full validation pass and an end-of-training plot.
-        should_plot_validation = cfg.val_plot_num_episodes > 0 and bool(
-            plot_episode_ids
-        )
-        val_metrics = _run_validation_and_maybe_plot(
-            pass_index=data_pass,
-            trigger_tag=f"final step={global_train_step}/{cfg.train_steps}",
-            max_steps=cfg.max_val_steps_per_epoch,
-            plot_subdir="final" if should_plot_validation else None,
-            loader=val_loader,
-        )
+        now = time.perf_counter()
+        elapsed = now - start_time
+        steps_in_window = global_step - last_log_step
+        window_elapsed = max(now - last_log_time, 1e-9)
+        steps_per_sec = steps_in_window / window_elapsed
+        eta = max(cfg.train_steps - global_step, 0) / max(steps_per_sec, 1e-9)
 
-        final_metrics = {
-            "data_pass": data_pass,
-            "global_step": global_train_step,
+        lr = optimizer.param_groups[0]["lr"]
+        logging.info(
+            f"[step {global_step}/{cfg.train_steps}] "
+            f"loss={train_metrics['loss']:.5f} "
+            f"acc={train_metrics['bin_acc']:.4f} "
+            f"mae={train_metrics['value_mae']:.5f} "
+            f"lr={lr:.2e} "
+            f"it/s={steps_per_sec:.2f} "
+            f"elapsed={_format_duration(elapsed)} "
+            f"eta={_format_duration(eta)}"
+        )
+        if wandb_run is not None:
+            wandb_run.log(
+                {
+                    "train/loss": train_metrics["loss"],
+                    "train/bin_acc": train_metrics["bin_acc"],
+                    "train/value_mae": train_metrics["value_mae"],
+                    "train/lr": lr,
+                    "train/steps_per_sec": steps_per_sec,
+                    "global_step": global_step,
+                },
+                step=global_step,
+            )
+
+        do_plot = (
+            cfg.plot_every_n_train_steps > 0
+            and global_step % cfg.plot_every_n_train_steps == 0
+            and bool(plot_episode_ids)
+        )
+        model.eval()
+        val_metrics = run_validation_and_maybe_plot(
+            global_step=global_step, do_plot=do_plot
+        )
+        model.train()
+
+        saved_metrics = {
+            "global_step": global_step,
             "train_loss": train_metrics["loss"],
             "train_bin_acc": train_metrics["bin_acc"],
             "train_value_mae": train_metrics["value_mae"],
             "val_loss": val_metrics["loss"],
             "val_bin_acc": val_metrics["bin_acc"],
             "val_value_mae": val_metrics["value_mae"],
-            "lr": optimizer.param_groups[0]["lr"],
+            "lr": lr,
         }
-        history.append(final_metrics)
-
-        logging.info(
-            f"[step {global_train_step}/{cfg.train_steps}] "
-            f"train_loss={final_metrics['train_loss']:.5f} "
-            f"val_loss={final_metrics['val_loss']:.5f} "
-            f"train_acc={final_metrics['train_bin_acc']:.4f} "
-            f"val_acc={final_metrics['val_bin_acc']:.4f} "
-            f"val_mae={final_metrics['val_value_mae']:.5f}"
-        )
-        if wandb_run is not None:
-            wandb_run.log(
-                {f"final/{k}": v for k, v in final_metrics.items()},
-                step=global_train_step,
-            )
-
+        history.append(saved_metrics)
         _save_json(output_dir / "metrics_history.json", history)
 
-        _save_checkpoint_and_check_early_stop(
-            val_metrics={
-                "loss": final_metrics["val_loss"],
-                "bin_acc": final_metrics["val_bin_acc"],
-                "value_mae": final_metrics["val_value_mae"],
-            },
-            trigger_tag=f"final step={global_train_step}/{cfg.train_steps}",
-            saved_metrics=final_metrics,
+        should_stop = save_checkpoint_and_check_early_stop(
+            val_metrics=val_metrics,
+            trigger_tag=f"step={global_step}/{cfg.train_steps}",
+            saved_metrics=saved_metrics,
         )
+
+        # Reset window AFTER validation/plot/checkpoint so their wall time
+        # is not counted as training throughput in the next window.
+        last_log_step = global_step
+        last_log_time = time.perf_counter()
+
+        if should_stop:
+            break
 
     logging.info(f"Training complete. Best val mae: {best_val_mae:.5f}")
 
