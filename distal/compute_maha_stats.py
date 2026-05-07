@@ -26,7 +26,7 @@ def embed_siglip_pooled(policy: PI05Policy, batch: dict) -> torch.Tensor:
     """Mean-pool SigLIP vision-tower embeddings across all camera patches.
 
     Skips the PaliGemma language model entirely — pure vision representation,
-    no language conditioning.
+    no language conditioning. Output dim = SigLIP hidden size (1152).
     """
     model = policy.model
     images, img_masks = policy._preprocess_images(batch)
@@ -143,8 +143,8 @@ def fit_gaussian_from_dataset(
 @dataclass
 class MahaStatsConfig:
     policy_path: str = "lerobot/pi05-libero"
-    dataset_repo_id: str = "lerobot/libero_plus"
-    hub_repo_id: str = "reece-omahoney/pi05-libero-plus-maha-stats-siglip"
+    dataset_repo_id: str = "lerobot/libero_10"
+    hub_repo_id: str = "reece-omahoney/pi05-libero-10-maha-stats-siglip"
     output_path: str = "outputs/maha/stats.safetensors"
     device: str = "cuda"
     batch_size: int = 256

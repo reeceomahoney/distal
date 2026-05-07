@@ -5,8 +5,10 @@ per-frame distances, aggregates per episode (mean), and reports AUROC
 against episode success labels.
 """
 
+import hashlib
 import json
 import re
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from importlib.resources import files
 from pathlib import Path
@@ -19,10 +21,11 @@ from lerobot.configs.policies import PreTrainedConfig
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.policies.factory import make_policy, make_pre_post_processors
 from lerobot.policies.pi05.modeling_pi05 import PI05Policy
+from lerobot.processor import rename_stats
 from lerobot.utils.device_utils import get_safe_torch_device
 from lerobot.utils.import_utils import register_third_party_plugins
 from lerobot.utils.utils import init_logging
-from safetensors.numpy import load_file
+from safetensors.numpy import load_file, save_file
 from sklearn.metrics import roc_auc_score
 from torch.utils.data import DataLoader, Subset
 from tqdm import tqdm
@@ -87,9 +90,9 @@ def replay_variant_names(
 @dataclass
 class MahaAurocConfig:
     policy_path: str = "lerobot/pi05-libero"
-    dataset_repo_id: str = "reece-omahoney/pi05-libero-plus"
-    maha_stats_repo_id: str = "reece-omahoney/pi05-libero-plus-maha-stats-siglip"
-    episodes_per_kind: int = 30
+    dataset_repo_id: str = "reece-omahoney/pi05-libero-10"
+    maha_stats_repo_id: str = "reece-omahoney/pi05-maha-stats-siglip"
+    episodes_per_kind: int = 50
     min_per_class: int = 10
     device: str = "cuda"
     batch_size: int = 32
@@ -111,9 +114,146 @@ class MahaAurocConfig:
     collect_seed: int = 0
     max_tasks: int | None = None
 
-    # Set False for base LIBERO (no perturbations); skips variant replay and
-    # per-kind AUROC, falling back to a balanced sample over all episodes.
-    per_kind: bool = True
+    # True for LIBERO-plus rollouts: replays variant names and reports per-kind
+    # AUROC. False for base LIBERO: balanced sample over all episodes, overall
+    # AUROC only.
+    is_libero_plus: bool = False
+
+    # kNN scoring: per-frame score = mean distance to k nearest demo embeddings.
+    # When True, maha_stats_repo_id is ignored and demo_dataset_repo_id is embedded
+    # on the fly via mean-pooled SigLIP features.
+    use_knn: bool = True
+    knn_k: int = 10
+    knn_metric: str = "l2"  # "l2" or "cosine"
+    demo_dataset_repo_id: str = "lerobot/libero_10"
+    demo_max_frames: int | None = 50_000
+    demo_subsample_seed: int = 0
+    demo_rename_map: dict[str, str] = field(
+        default_factory=lambda: {
+            "observation.images.front": "observation.images.image",
+            "observation.images.wrist": "observation.images.image2",
+        }
+    )
+    knn_chunk_size: int = 256
+    demo_embs_cache_dir: str = "outputs/maha/demo_embs"
+
+
+def embed_dataset(
+    policy: PI05Policy,
+    preprocessor,
+    dataset: LeRobotDataset | Subset,
+    batch_size: int,
+    num_workers: int,
+    device: torch.device,
+    max_frames: int | None,
+    subsample_seed: int,
+    desc: str,
+) -> np.ndarray:
+    """Embed every (optionally subsampled) frame and return (N, D) float32."""
+    loader_ds: LeRobotDataset | Subset = dataset
+    if max_frames is not None and max_frames < len(dataset):
+        rng = np.random.default_rng(subsample_seed)
+        idx = rng.choice(len(dataset), size=max_frames, replace=False)
+        loader_ds = Subset(dataset, sorted(idx.tolist()))
+    loader = DataLoader(
+        loader_ds,
+        batch_size=batch_size,
+        shuffle=False,
+        num_workers=num_workers,
+        pin_memory=True,
+        drop_last=False,
+    )
+    embs: list[torch.Tensor] = []
+    for batch in tqdm(loader, desc=desc):
+        batch = {
+            k: v.to(device) if isinstance(v, torch.Tensor) else v
+            for k, v in batch.items()
+        }
+        batch = preprocessor(batch)
+        with torch.no_grad():
+            emb = embed_siglip_pooled(policy, batch)
+        embs.append(emb.cpu().float())
+    return torch.cat(embs, dim=0).numpy()
+
+
+def demo_embs_cache_path(cfg: "MahaAurocConfig") -> Path:
+    """Content-addressed local path for cached demo embeddings."""
+    sig_dict = {
+        "policy_path": cfg.policy_path,
+        "demo_dataset_repo_id": cfg.demo_dataset_repo_id,
+        "demo_max_frames": cfg.demo_max_frames,
+        "demo_subsample_seed": cfg.demo_subsample_seed,
+        "demo_rename_map": cfg.demo_rename_map,
+    }
+    sig = hashlib.sha256(json.dumps(sig_dict, sort_keys=True).encode()).hexdigest()[:16]
+    return Path(cfg.demo_embs_cache_dir) / f"{sig}.safetensors"
+
+
+def load_or_embed_demos(
+    cfg: "MahaAurocConfig",
+    policy: PI05Policy,
+    policy_cfg,
+    device: torch.device,
+) -> np.ndarray:
+    """Return demo embeddings, loading from local cache when available."""
+    cache_path = demo_embs_cache_path(cfg)
+    if cache_path.is_file():
+        demo_embs = load_file(str(cache_path))["embeddings"]
+        print(f"Loaded cached demo embeddings from {cache_path}: {demo_embs.shape}")
+        return demo_embs
+
+    demo_dataset = LeRobotDataset(repo_id=cfg.demo_dataset_repo_id, vcodec="auto")
+    demo_preprocessor, _ = make_pre_post_processors(
+        policy_cfg=policy_cfg,
+        pretrained_path=str(policy_cfg.pretrained_path),
+        dataset_stats=rename_stats(demo_dataset.meta.stats or {}, cfg.demo_rename_map),
+        preprocessor_overrides={
+            "rename_observations_processor": {"rename_map": cfg.demo_rename_map},
+        },
+    )
+    demo_embs = embed_dataset(
+        policy=policy,
+        preprocessor=demo_preprocessor,
+        dataset=demo_dataset,
+        batch_size=cfg.batch_size,
+        num_workers=cfg.num_workers,
+        device=device,
+        max_frames=cfg.demo_max_frames,
+        subsample_seed=cfg.demo_subsample_seed,
+        desc="Embedding demos",
+    )
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    save_file({"embeddings": demo_embs}, str(cache_path))
+    print(f"Cached demo embeddings to {cache_path}: {demo_embs.shape}")
+    return demo_embs
+
+
+def knn_distances(
+    query: np.ndarray,
+    demos: np.ndarray,
+    k: int,
+    metric: str,
+    chunk_size: int,
+    device: torch.device,
+) -> np.ndarray:
+    """Mean distance from each query row to its k nearest demo rows."""
+    q = torch.from_numpy(query).to(device, dtype=torch.float32)
+    d = torch.from_numpy(demos).to(device, dtype=torch.float32)
+    if metric == "cosine":
+        q = torch.nn.functional.normalize(q, dim=1)
+        d = torch.nn.functional.normalize(d, dim=1)
+    out: list[np.ndarray] = []
+    for i in range(0, q.shape[0], chunk_size):
+        chunk = q[i : i + chunk_size]
+        if metric == "l2":
+            dist = torch.cdist(chunk, d)
+        elif metric == "cosine":
+            dist = 1.0 - chunk @ d.T
+        else:
+            raise ValueError(f"Unknown knn_metric: {metric}")
+        top = torch.topk(dist, min(k, dist.shape[1]), dim=1, largest=False).values
+        out.append(top.mean(dim=1).cpu().numpy())
+    return np.concatenate(out)
 
 
 @draccus.wrap()
@@ -125,20 +265,23 @@ def main(cfg: MahaAurocConfig):
     torch.backends.cudnn.benchmark = True
     torch.backends.cuda.matmul.allow_tf32 = True
 
-    # Load maha stats
-    stats_path = hf_hub_download(
-        repo_id=cfg.maha_stats_repo_id,
-        filename="stats.safetensors",
-        repo_type="dataset",
-        force_download=True,
-    )
-    stats = load_file(stats_path)
-    gauss_mean = stats["mean"]
-    gauss_cov_inv = stats["cov_inv"]
-    print(
-        f"Loaded Mahalanobis stats: mean {gauss_mean.shape}, "
-        f"cov_inv {gauss_cov_inv.shape}"
-    )
+    # Load maha stats (skipped in kNN mode)
+    gauss_mean: np.ndarray | None = None
+    gauss_cov_inv: np.ndarray | None = None
+    if not cfg.use_knn:
+        stats_path = hf_hub_download(
+            repo_id=cfg.maha_stats_repo_id,
+            filename="stats.safetensors",
+            repo_type="dataset",
+            force_download=True,
+        )
+        stats = load_file(stats_path)
+        gauss_mean = stats["mean"]
+        gauss_cov_inv = stats["cov_inv"]
+        print(
+            f"Loaded Mahalanobis stats: mean {gauss_mean.shape}, "
+            f"cov_inv {gauss_cov_inv.shape}"
+        )
 
     # Load dataset
     dataset = LeRobotDataset(repo_id=cfg.dataset_repo_id, vcodec="auto")
@@ -152,7 +295,7 @@ def main(cfg: MahaAurocConfig):
     rng = np.random.default_rng(cfg.seed)
     selected_episodes: set[int] = set()
 
-    if cfg.per_kind:
+    if cfg.is_libero_plus:
         # Replay collection order to map episode_index -> variant name.
         variant_names = replay_variant_names(
             cfg.suites, cfg.per_cell, cfg.collect_seed, cfg.max_tasks
@@ -254,55 +397,88 @@ def main(cfg: MahaAurocConfig):
         policy_cfg=policy_cfg, pretrained_path=str(policy_cfg.pretrained_path)
     )
 
-    # Embed and compute distances
+    # Demo embeddings for kNN: cached locally per (policy, dataset, embedding,
+    # subsample) signature so reruns skip the expensive vision pass.
+    demo_embs: np.ndarray | None = None
+    if cfg.use_knn:
+        demo_embs = load_or_embed_demos(cfg, policy, policy_cfg, device)
+
+    # Embed selected rollout frames
     subset = Subset(dataset, frame_indices.tolist())
-    loader = DataLoader(
-        subset,
+    rollout_embs = embed_dataset(
+        policy=policy,
+        preprocessor=preprocessor,
+        dataset=subset,
         batch_size=cfg.batch_size,
-        shuffle=False,
         num_workers=cfg.num_workers,
-        pin_memory=True,
-        drop_last=False,
+        device=device,
+        max_frames=None,
+        subsample_seed=0,
+        desc="Embedding rollouts",
     )
 
-    all_dists: list[float] = []
-    for batch in tqdm(loader, desc="Computing Maha distances"):
-        batch = {
-            k: v.to(device) if isinstance(v, torch.Tensor) else v
-            for k, v in batch.items()
-        }
-        batch = preprocessor(batch)
-        with torch.no_grad():
-            emb = embed_siglip_pooled(policy, batch)
-            dists = compute_mahalanobis_np(emb.cpu().numpy(), gauss_mean, gauss_cov_inv)
-        all_dists.extend(dists.tolist())
+    if cfg.use_knn:
+        assert demo_embs is not None
+        print(f"Computing kNN distances (k={cfg.knn_k}, metric={cfg.knn_metric})...")
+        distances = knn_distances(
+            query=rollout_embs,
+            demos=demo_embs,
+            k=cfg.knn_k,
+            metric=cfg.knn_metric,
+            chunk_size=cfg.knn_chunk_size,
+            device=device,
+        )
+    else:
+        assert gauss_mean is not None and gauss_cov_inv is not None
+        distances = compute_mahalanobis_np(rollout_embs, gauss_mean, gauss_cov_inv)
 
-    distances = np.array(all_dists)
     selected_episode_index = episode_index[frame_indices]
     selected_success = success[frame_indices]
 
-    # Aggregate per episode: mean distance and success label
-    ep_mean_dist = {}
-    ep_success = {}
-    for ep in selected_episodes:
-        mask = selected_episode_index == ep
-        ep_mean_dist[ep] = distances[mask].mean()
-        ep_success[ep] = bool(selected_success[mask][0])
+    aggregators: dict[str, Callable[[np.ndarray], float]] = {
+        "mean": lambda d: float(d.mean()),
+        "max": lambda d: float(d.max()),
+    }
 
     episodes = sorted(selected_episodes)
-    scores = np.array([ep_mean_dist[ep] for ep in episodes])
-    labels = np.array([not ep_success[ep] for ep in episodes])  # failure = positive
+    ep_success = {}
+    ep_scores: dict[str, dict[int, float]] = {name: {} for name in aggregators}
+    for ep in episodes:
+        mask = selected_episode_index == ep
+        d = distances[mask]
+        ep_success[ep] = bool(selected_success[mask][0])
+        for name, fn in aggregators.items():
+            ep_scores[name][ep] = fn(d)
 
-    n_fail = labels.sum()
+    labels = np.array([not ep_success[ep] for ep in episodes])  # failure = positive
+    n_fail = int(labels.sum())
     n_success = len(labels) - n_fail
     print(f"\nEpisodes: {len(labels)} ({n_success} success, {n_fail} failure)")
 
     if n_fail == 0 or n_success == 0:
         print("Cannot compute AUROC: only one class present.")
         return
-    print(f"AUROC (mean Maha → failure): {roc_auc_score(labels, scores):.4f}")
 
-    if not cfg.per_kind:
+    print("\nEpisode-level AUROC by aggregator:")
+    print(f"  {'aggregator':<20}  {'auroc':>8}")
+    agg_aurocs: dict[str, float] = {}
+    for name in aggregators:
+        scores_arr = np.array([ep_scores[name][ep] for ep in episodes])
+        a = roc_auc_score(labels, scores_arr)
+        agg_aurocs[name] = a
+        print(f"  {name:<20}  {a:>8.4f}")
+
+    # Frame-level AUROC: each frame inherits its episode's failure label.
+    frame_labels = np.array(
+        [not ep_success[int(ep)] for ep in selected_episode_index], dtype=bool
+    )
+    frame_auroc = roc_auc_score(frame_labels, distances)
+    print(f"\nFrame-level AUROC (per-frame distance → failure): {frame_auroc:.4f}")
+
+    # Default per-kind score uses the best single aggregator (max for now).
+    scores = np.array([ep_scores["max"][ep] for ep in episodes])
+
+    if not cfg.is_libero_plus:
         return
 
     kinds_per_ep = [

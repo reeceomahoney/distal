@@ -1,10 +1,12 @@
-"""Quick diagnostic: compute maha distances on the value-training dataset
-and print distribution stats to understand reward shape.
+"""Quick diagnostic: compute kNN-to-demo distances on the value-training
+dataset and print distribution stats to understand reward shape.
 
-Mirrors the exact policy/stats/dataset wiring used in train_value.py when
-reward_mode == "maha".
+Mirrors the policy/embedding/dataset wiring used in maha_auroc.py: per-frame
+score = mean distance to the k nearest demo embeddings, optionally pooled
+per-camera.
 """
 
+import dataclasses
 import logging
 from pathlib import Path
 
@@ -16,8 +18,12 @@ from lerobot.policies.factory import make_policy, make_pre_post_processors
 from lerobot.policies.pi05.modeling_pi05 import PI05Policy
 from lerobot.utils.import_utils import register_third_party_plugins
 
-from distal.compute_maha_stats import compute_maha_distances
-from distal.maha_reward import load_maha_stats
+from distal.maha_auroc import (
+    MahaAurocConfig,
+    embed_dataset,
+    knn_distances,
+    load_or_embed_demos,
+)
 from distal.train_value import RECAPValueTrainingConfig
 
 
@@ -79,9 +85,7 @@ def plot_all_episodes(
             t, moving_average(r, ma_window), color=color, linewidth=1.2, alpha=0.7
         )
 
-    ax_d.set_title(
-        f"raw mahalanobis distance  ({len(unique)} episodes, MA window={ma_window})"
-    )
+    ax_d.set_title(f"raw kNN distance  ({len(unique)} episodes, MA window={ma_window})")
     ax_d.set_xlabel("frame")
     ax_d.set_ylabel("d")
     ax_d.grid(alpha=0.3)
@@ -120,20 +124,27 @@ def main() -> None:
     cfg = RECAPValueTrainingConfig()
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
+    # kNN scoring config — mirrors MahaAurocConfig defaults so this script
+    # reflects the same scoring used in the AUROC diagnostic.
+    knn_cfg = dataclasses.replace(
+        MahaAurocConfig(),
+        policy_path=cfg.base_policy,
+        batch_size=cfg.maha_embed_batch_size,
+        num_workers=cfg.maha_embed_num_workers,
+    )
+
     num_episodes = 50
     episodes = list(range(num_episodes))
     print(
-        f"dataset     = {cfg.repo_id} (first {num_episodes} episodes)\n"
-        f"base_policy = {cfg.base_policy}\n"
-        f"stats_path  = {cfg.maha_stats_path}\n"
-        f"device      = {device}"
+        f"dataset       = {cfg.repo_id} (first {num_episodes} episodes)\n"
+        f"base_policy   = {cfg.base_policy}\n"
+        f"demo_dataset  = {knn_cfg.demo_dataset_repo_id}\n"
+        f"knn           = k={knn_cfg.knn_k} metric={knn_cfg.knn_metric}\n"
+        f"device        = {device}"
     )
 
     dataset = LeRobotDataset(repo_id=cfg.repo_id, episodes=episodes, vcodec="auto")
     print(f"frames = {len(dataset.hf_dataset)}  episodes = {len(episodes)}")
-
-    mean, cov_inv = load_maha_stats(cfg.maha_stats_path)
-    print(f"stats dim = {mean.shape[0]}")
 
     policy_cfg = PreTrainedConfig.from_pretrained(cfg.base_policy)
     policy_cfg.pretrained_path = Path(cfg.base_policy)
@@ -145,18 +156,32 @@ def main() -> None:
         policy_cfg=policy_cfg, pretrained_path=str(policy_cfg.pretrained_path)
     )
 
-    distances = compute_maha_distances(
+    demo_embs = load_or_embed_demos(knn_cfg, policy, policy_cfg, device)
+
+    rollout_embs = embed_dataset(
         policy=policy,
         preprocessor=preprocessor,
         dataset=dataset,
-        gauss_mean=mean,
-        gauss_cov_inv=cov_inv,
-        batch_size=cfg.maha_embed_batch_size,
-        num_workers=cfg.maha_embed_num_workers,
+        batch_size=knn_cfg.batch_size,
+        num_workers=knn_cfg.num_workers,
+        device=device,
+        max_frames=None,
+        subsample_seed=0,
+        desc="Embedding rollouts",
     )
+
     del policy
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
+
+    distances = knn_distances(
+        query=rollout_embs,
+        demos=demo_embs,
+        k=knn_cfg.knn_k,
+        metric=knn_cfg.knn_metric,
+        chunk_size=knn_cfg.knn_chunk_size,
+        device=device,
+    ).astype(np.float64)
 
     d_min, d_max = float(distances.min()), float(distances.max())
     if d_max > d_min:
@@ -164,7 +189,7 @@ def main() -> None:
     else:
         normalized = np.zeros_like(distances)
 
-    percentile_table(distances, "raw mahalanobis distance")
+    percentile_table(distances, "raw kNN distance")
     percentile_table(normalized, "normalized reward in [-1, 0]")
     ascii_histogram(distances, bins=20)
 
