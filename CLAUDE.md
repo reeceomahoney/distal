@@ -64,6 +64,11 @@ diagnostic.
 - **PRs to external repos** (LeRobot fork etc.): check
   `.github/pull_request_template.md` and `CONTRIBUTING.md` first and follow
   their format.
+- **Isambard AI Phase 2 (`u6jz.aip2.isambard`) home is 100 GiB; large dirs are
+  symlinked to `$SCRATCHDIR=/scratch/u6jz/reece.u6jz` (5 TiB).** Active links:
+  `~/distal/{outputs,wandb}` and `~/.cache/{huggingface,uv,triton}`. Write new
+  bulky outputs to scratch (or under an existing symlinked path) — never to a
+  fresh dir under `~`.
 
 ## Architecture
 
