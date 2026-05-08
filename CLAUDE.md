@@ -66,9 +66,10 @@ diagnostic.
   their format.
 - **Isambard AI Phase 2 (`u6jz.aip2.isambard`) home is 100 GiB; large dirs are
   symlinked to `$SCRATCHDIR=/scratch/u6jz/reece.u6jz` (5 TiB).** Active links:
-  `~/distal/{outputs,wandb}` and `~/.cache/{huggingface,uv,triton}`. Write new
-  bulky outputs to scratch (or under an existing symlinked path) — never to a
-  fresh dir under `~`.
+  `~/distal/{.venv,outputs,wandb}` and `~/.cache/{huggingface,uv,triton}`.
+  `.venv` lives on scratch so `uv` can hardlink (rather than copy) into it.
+  Write new bulky outputs to scratch (or under an existing symlinked path) —
+  never to a fresh dir under `~`.
 
 ## Architecture
 
