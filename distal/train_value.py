@@ -109,9 +109,6 @@ class RECAPValueTrainingConfig:
     # Per-step reward source. See RewardConfig subclasses (steps / maha / knn).
     reward: RewardConfig = field(default_factory=KnnRewardConfig)
 
-    # Input processing
-    tokenizer_max_length: int = 200
-
     # Value network architecture (overrides RECAPValueConfig defaults).
     model: RECAPValueConfig = field(
         default_factory=lambda: RECAPValueConfig(
