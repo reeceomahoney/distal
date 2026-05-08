@@ -829,6 +829,7 @@ def run_recap_pistar_train_val(cfg: RECAPPiStarTrainingConfig) -> None:
         policy = PiStar06Policy(config=policy_cfg)
     finally:
         torch.set_default_dtype(original_dtype)
+    policy.recap_log_every = cfg.log_every_n_steps
     _log_memory("post-policy-init")
 
     if cfg.policy.pretrained_path is not None:
