@@ -135,7 +135,7 @@ def main() -> None:
         dataset=dataset,
         success_by_episode=success_by_episode,
         c_fail=cfg.c_fail,
-        num_value_bins=cfg.num_value_bins,
+        num_value_bins=cfg.model.num_value_bins,
         step_rewards=step_rewards,
     )
     steps_frame_targets: list | None = None
@@ -144,7 +144,7 @@ def main() -> None:
             dataset=dataset,
             success_by_episode=success_by_episode,
             c_fail=cfg.c_fail,
-            num_value_bins=cfg.num_value_bins,
+            num_value_bins=cfg.model.num_value_bins,
             step_rewards=None,
         )
 
@@ -190,7 +190,7 @@ def main() -> None:
         title=(
             f"ground-truth normalized returns  "
             f"(reward={cfg.reward.type}, c_fail={cfg.c_fail}, "
-            f"num_value_bins={cfg.num_value_bins})"
+            f"num_value_bins={cfg.model.num_value_bins})"
         ),
     )
     print(f"saved -> {output_path}")

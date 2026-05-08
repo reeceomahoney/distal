@@ -77,10 +77,10 @@ class RECAPValueConfig(PreTrainedConfig):
 
     text_backbone: str = "google/gemma-3-270m"
     vision_tower: str = "google/siglip-so400m-patch14-224"
-    precision: str = "float32"
+    precision: str = "bfloat16"
     image_size: int = 224
     hidden_dim: int = 640
-    num_value_bins: int = 50
+    num_value_bins: int = 201
     v_min: float = -1.0
     v_max: float = 0.0
     value_head_depth: int = 1

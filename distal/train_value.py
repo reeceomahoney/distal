@@ -28,7 +28,7 @@ from collections.abc import Iterator
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Literal, cast
+from typing import Any
 
 import draccus
 import numpy as np
@@ -105,22 +105,20 @@ class RECAPValueTrainingConfig:
 
     # Value target construction
     c_fail: float = 50.0
-    num_value_bins: int = 201
 
     # Per-step reward source. See RewardConfig subclasses (steps / maha / knn).
     reward: RewardConfig = field(default_factory=KnnRewardConfig)
 
     # Input processing
     tokenizer_max_length: int = 200
-    image_size: int = 224
 
-    # VLM backbone: SigLIP-400M vision tower + Gemma 3 270M text backbone
-    text_backbone: str = "google/gemma-3-270m"
-    vision_tower: str = "google/siglip-so400m-patch14-224"
-    model_precision: str = "bfloat16"
-    value_head_depth: int = 1
-    gradient_checkpointing: bool = True
-    compile_model: bool = True
+    # Value network architecture (overrides RECAPValueConfig defaults).
+    model: RECAPValueConfig = field(
+        default_factory=lambda: RECAPValueConfig(
+            gradient_checkpointing=True,
+            compile_model=True,
+        )
+    )
 
     # Hub push for trained value network
     hub_user: str = "reece-omahoney"
@@ -956,7 +954,7 @@ def run_recap_value_train_val(cfg: RECAPValueTrainingConfig) -> None:
         dataset=dataset,
         success_by_episode=success_by_episode,
         c_fail=cfg.c_fail,
-        num_value_bins=cfg.num_value_bins,
+        num_value_bins=cfg.model.num_value_bins,
         step_rewards=step_rewards,
     )
     train_targets, val_targets = _split_train_val_targets(
@@ -967,8 +965,8 @@ def run_recap_value_train_val(cfg: RECAPValueTrainingConfig) -> None:
 
     preprocessor = build_value_preprocessor(
         dataset=dataset,
-        tokenizer_name=cfg.text_backbone,
-        model_precision=cfg.model_precision,
+        tokenizer_name=cfg.model.text_backbone,
+        model_precision=cfg.model.precision,
         device=str(device),
     )
     logging.info("Created pi05 preprocessor for value network training")
@@ -999,27 +997,16 @@ def run_recap_value_train_val(cfg: RECAPValueTrainingConfig) -> None:
         drop_last=False,
     )
 
-    if cfg.model_precision not in ("float32", "bfloat16"):
+    if cfg.model.precision not in ("float32", "bfloat16"):
         raise ValueError(
-            "model_precision must be one of ['float32', 'bfloat16'], got "
-            f"{cfg.model_precision}"
+            "model.precision must be one of ['float32', 'bfloat16'], got "
+            f"{cfg.model.precision}"
         )
-    model_precision = cast(Literal["float32", "bfloat16"], cfg.model_precision)
 
-    model_config = RECAPValueConfig(
-        text_backbone=cfg.text_backbone,
-        vision_tower=cfg.vision_tower,
-        precision=model_precision,
-        image_size=cfg.image_size,
-        num_value_bins=cfg.num_value_bins,
-        value_head_depth=cfg.value_head_depth,
-        gradient_checkpointing=cfg.gradient_checkpointing,
-        compile_model=cfg.compile_model,
-        device=str(device),
-        repo_id=cfg.value_repo_id,
-        push_to_hub=cfg.push_to_hub,
-    )
-    model = RECAPValueNetwork(model_config).to(device)
+    cfg.model.device = str(device)
+    cfg.model.repo_id = cfg.value_repo_id
+    cfg.model.push_to_hub = cfg.push_to_hub
+    model = RECAPValueNetwork(cfg.model).to(device)
 
     trainable_params = [p for p in model.parameters() if p.requires_grad]
     logging.info(
@@ -1240,8 +1227,8 @@ def run_recap_value_train_val(cfg: RECAPValueTrainingConfig) -> None:
                         predictions=collected_predictions.get(episode_index, []),
                         output_path=plot_path,
                         num_preview_frames=cfg.val_plot_num_frames,
-                        num_value_bins=cfg.num_value_bins,
-                        image_size=cfg.image_size,
+                        num_value_bins=cfg.model.num_value_bins,
+                        image_size=cfg.model.image_size,
                     )
                     if did_save:
                         saved_paths.append(plot_path)
