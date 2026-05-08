@@ -108,9 +108,9 @@ class RECAPValueTrainingConfig:
     # Per-step reward source:
     #   "steps" = fixed -1
     #   "maha"  = normalized Mahalanobis distance of each frame's VLM embedding
-    #             from the base training distribution (distal/maha_reward.py)
+    #             from the base training distribution (distal/rewards/maha.py)
     #   "knn"   = normalized mean kNN distance from each frame's VLM embedding
-    #             to the base demo embeddings (distal/knn_reward.py)
+    #             to the base demo embeddings (distal/rewards/knn.py)
     reward_mode: Literal["steps", "maha", "knn"] = "maha"
     base_policy: str = "lerobot/pi05-libero"
     maha_stats_path: str = "reece-omahoney/pi05-maha-stats"
@@ -975,7 +975,7 @@ def run_recap_value_train_val(cfg: RECAPValueTrainingConfig) -> None:
 
     step_rewards: dict[int, float] | None = None
     if cfg.reward_mode == "maha":
-        from distal.maha_reward import load_or_compute_maha_rewards
+        from distal.rewards.maha import load_or_compute_maha_rewards
 
         logging.info(
             f"Loading or computing Mahalanobis-distance rewards using "
@@ -991,7 +991,7 @@ def run_recap_value_train_val(cfg: RECAPValueTrainingConfig) -> None:
             use_cache=cfg.cache_step_rewards,
         )
     elif cfg.reward_mode == "knn":
-        from distal.knn_reward import load_or_compute_knn_rewards
+        from distal.rewards.knn import load_or_compute_knn_rewards
 
         logging.info(
             f"Loading or computing kNN-distance rewards using {cfg.base_policy} "

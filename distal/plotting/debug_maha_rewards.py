@@ -20,7 +20,7 @@ from lerobot.utils.import_utils import register_third_party_plugins
 from torch.utils.data import Subset
 
 from distal.auroc import AurocConfig
-from distal.knn_reward import embed_dataset, knn_distances, load_or_embed_demos
+from distal.rewards.knn import embed_dataset, knn_distances, load_or_embed_demos
 
 
 def percentile_table(values: np.ndarray, label: str) -> None:

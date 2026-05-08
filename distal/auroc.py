@@ -29,8 +29,8 @@ from sklearn.metrics import roc_auc_score
 from torch.utils.data import Subset
 
 from distal.collect_libero_plus import sample_task_ids
-from distal.compute_maha_stats import compute_mahalanobis_np
-from distal.knn_reward import embed_dataset, knn_distances, load_or_embed_demos
+from distal.rewards.knn import embed_dataset, knn_distances, load_or_embed_demos
+from distal.rewards.maha_stats import compute_mahalanobis_np
 
 PERTURBATION_PATTERNS = {
     "language": re.compile(r"_language_"),

@@ -25,7 +25,7 @@ pixi run eval                            # lerobot-eval in LIBERO sim (pi05-libe
 # RECAP pipeline (run directly via uv, not lerobot-train)
 uv run python -m distal.collect          # rollouts → LeRobot dataset
 uv run python -m distal.collect_libero_plus
-uv run python -m distal.compute_maha_stats      # mean / cov_inv from base-dataset embeddings
+uv run python -m distal.rewards.maha_stats      # mean / cov_inv from base-dataset embeddings
 uv run python -m distal.train_value             # distributional value network
 uv run python -m distal.train_pi_star           # advantage-conditioned Pi0.5 fine-tune
 uv run python -m distal.auroc                   # Mahalanobis / kNN AUROC vs episode success
@@ -75,14 +75,14 @@ by the next.
 1. **Collect** (`distal/collect.py`, `distal/collect_libero_plus.py`) — Roll out
    a base policy in LIBERO via LeRobot's `eval_policy()`, save observations,
    actions, and per-episode `success` into a LeRobot dataset.
-1. **Maha stats** (`distal/compute_maha_stats.py`) — From the base dataset the
+1. **Maha stats** (`distal/rewards/maha_stats.py`) — From the base dataset the
    policy was trained on, fit Ledoit-Wolf mean / inverse covariance over
    mean-pooled VLM image-token embeddings. Saved as safetensors and cached on
    the HF Hub.
 1. **Train value** (`distal/train_value.py`) — Distributional value model
    (`RECAPValueNetwork` in `distal/value_model.py`: SmolVLM + expert + learned
    value query token + categorical head, vision encoder frozen). Reward signal
-   is either fixed `-1` per step or `distal/maha_reward.py` (Mahalanobis-based
+   is either fixed `-1` per step or `distal/rewards/maha.py` (Mahalanobis-based
    `[-1, 0]` rewards). Adapted from the upstream LeRobot
    `jv/recap-value-network` PR.
 1. **Train PiStar06** (`distal/train_pi_star.py`) — Advantage-conditioned Pi0.5
@@ -108,9 +108,13 @@ auto-set to a per-task percentile during training), `advantage_dropout` (CFG).
 
 - `value_model.py` — `RECAPValueNetwork` (SmolVLM + expert backbone, value query
   token, categorical head over discretized return bins).
-- `maha_reward.py` — Loads stats from `compute_maha_stats.py`, computes per-
+- `rewards/maha.py` — Loads stats from `rewards/maha_stats.py`, computes per-
   frame Mahalanobis distances on a value-training dataset, min-max normalizes to
-  `[-1, 0]` for use as per-step rewards.
+  `[-1, 0]` for use as per-step rewards. Local content-addressed cache under
+  `HF_ASSETS_CACHE/distal/rewards/`.
+- `rewards/knn.py` — Same shape as `rewards/maha.py`, but per-frame score is the
+  mean L2/cosine distance to the k nearest base-policy demo embeddings (demo
+  embeddings cached under `HF_ASSETS_CACHE/distal/demo_embs/`).
 - `auroc.py` — Evaluates Mahalanobis or kNN distance as a failure predictor:
   per-frame distances → episode-mean → AUROC vs `success` labels.
 - `advantage_cache.py` — Content-addressed cache for precomputed advantages,

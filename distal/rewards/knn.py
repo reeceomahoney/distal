@@ -1,6 +1,6 @@
 """kNN-distance-based per-step rewards for value training.
 
-Mirror of ``distal/maha_reward.py`` but with the per-frame distance computed
+Mirror of ``distal/rewards/maha.py`` but with the per-frame distance computed
 as the mean distance from each rollout VLM embedding to its k nearest
 neighbours in a base-policy demo dataset, instead of a fitted Gaussian's
 Mahalanobis distance.
@@ -8,7 +8,7 @@ Mahalanobis distance.
 Demo embeddings are cached locally (content-addressed by policy + dataset +
 subsample) under ``demo_embs_cache_dir`` so reruns skip the expensive vision
 pass. Per-frame normalised rewards are also cached locally (content-addressed
-by everything that affects them) via ``maha_reward.load_or_compute_rewards``.
+by everything that affects them) via ``rewards.maha.load_or_compute_rewards``.
 """
 
 import hashlib
@@ -28,11 +28,11 @@ from safetensors.numpy import load_file, save_file
 from torch.utils.data import DataLoader, Subset
 from tqdm import tqdm
 
-from distal.compute_maha_stats import embed_siglip_pooled
-from distal.maha_reward import (
+from distal.rewards.maha import (
     load_or_compute_rewards,
     normalize_distances_to_rewards,
 )
+from distal.rewards.maha_stats import embed_siglip_pooled
 
 
 def embed_dataset(

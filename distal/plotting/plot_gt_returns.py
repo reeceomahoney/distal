@@ -130,7 +130,7 @@ def main() -> None:
 
     step_rewards: dict[int, float] | None = None
     if cfg.reward_mode == "maha":
-        from distal.maha_reward import load_or_compute_maha_rewards
+        from distal.rewards.maha import load_or_compute_maha_rewards
 
         print(f"loading maha rewards (cache: {cfg.repo_id}) ...")
         step_rewards = load_or_compute_maha_rewards(

@@ -1,7 +1,7 @@
 """Mahalanobis-distance-based per-step rewards for value training.
 
 Given a base dataset (e.g. ``lerobot/libero``) that a policy was trained on,
-``compute_maha_stats.py`` computes the mean/inv-covariance of the policy's
+``rewards/maha_stats.py`` computes the mean/inv-covariance of the policy's
 mean-pooled image-token embeddings. This module loads those stats and
 computes the Mahalanobis distance for every frame in a value-training
 dataset, then min-max normalizes the distances into the ``[-1, 0]`` range so
@@ -23,7 +23,7 @@ from lerobot.policies.factory import make_policy, make_pre_post_processors
 from lerobot.policies.pi05.modeling_pi05 import PI05Policy
 from safetensors.numpy import load_file, save_file
 
-from distal.compute_maha_stats import compute_maha_distances
+from distal.rewards.maha_stats import compute_maha_distances
 
 REWARDS_CACHE_DIR = Path(HF_ASSETS_CACHE) / "distal" / "rewards"
 

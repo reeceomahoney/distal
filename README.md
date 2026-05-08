@@ -33,8 +33,10 @@ The system implements a multi-stage training pipeline:
 distal/                             # Core pipeline
 ├── collect.py                      # Policy rollout → dataset (LIBERO)
 ├── collect_libero_plus.py          # Same, for LIBERO-plus suite
-├── compute_maha_stats.py           # Mahalanobis mean / inv-cov fitting
-├── maha_reward.py                  # Mahalanobis → per-step reward
+├── rewards/                        # Per-step reward sources for value training
+│   ├── maha_stats.py               # Mahalanobis mean / inv-cov fitting
+│   ├── maha.py                     # Mahalanobis distance → per-step reward
+│   └── knn.py                      # Mean kNN-to-demo distance → per-step reward
 ├── auroc.py                        # Mahalanobis / kNN as failure predictor (AUROC)
 ├── train_value.py                  # Distributional value function training
 ├── train_pi_star.py                # PiStar06 fine-tune (in-script advantage precompute)
@@ -84,7 +86,7 @@ pixi run eval               # Evaluate in LIBERO simulation
 
 # RL pipeline
 uv run python -m distal.collect
-uv run python -m distal.compute_maha_stats
+uv run python -m distal.rewards.maha_stats
 uv run python -m distal.train_value
 uv run python -m distal.train_pi_star
 
