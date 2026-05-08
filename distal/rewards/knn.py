@@ -74,7 +74,7 @@ def embed_dataset(
             emb = embed_siglip_pooled(policy, batch)
         embs.append(emb.cpu().float())
         done = i + 1
-        if done % 10 == 0 or done == total:
+        if done % 100 == 0 or done == total:
             elapsed = time.monotonic() - start
             eta = elapsed * (total - done) / done
             logging.info(

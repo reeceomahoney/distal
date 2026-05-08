@@ -1,9 +1,9 @@
-"""Content-addressed cache for precomputed advantage labels.
+"""Content-addressed local cache for precomputed advantage labels.
 
 The cache is keyed by a signature over every input that influences the
-computed advantages (dataset/value-network commit SHAs, scalar hyperparams,
-schema version).  Cache files are named ``advantage_cache_<sig>.json`` and
-mirrored in a HuggingFace Hub ``dataset``-type repo.
+computed advantages (dataset/value-network repo ids, scalar hyperparams,
+schema version). Files live at
+``$HF_ASSETS_CACHE/distal/advantages/<signature>.json``.
 """
 
 import hashlib
@@ -11,38 +11,17 @@ import json
 import logging
 from pathlib import Path
 
+from huggingface_hub.constants import HF_ASSETS_CACHE
 
-def resolve_hub_sha(repo_id: str, repo_type: str, revision: str | None = None) -> str:
-    """Return the commit SHA for a HF Hub repo, or a sentinel if unreachable.
+ADVANTAGE_CACHE_DIR = Path(HF_ASSETS_CACHE) / "distal" / "advantages"
 
-    Sentinel values keep the signature deterministic even when the hub is not
-    reachable, at the cost of treating "no-resolve" as a single cache bucket.
-    """
-    try:
-        from huggingface_hub import HfApi
-
-        api = HfApi()
-        if repo_type == "dataset":
-            info = api.dataset_info(repo_id, revision=revision)
-        else:
-            info = api.model_info(repo_id, revision=revision)
-        if info.sha is not None:
-            return info.sha
-    except Exception as exc:  # noqa: BLE001
-        logging.warning(
-            f"Could not resolve {repo_type} SHA for {repo_id}@{revision}: {exc}. "
-            "Using repo_id+revision as fallback; cache may be stale if the repo "
-            "is mutated in place."
-        )
-    return f"noresolve:{repo_id}@{revision}"
+# Bump when the cache file format changes in a way file hashes can't detect.
+CACHE_SCHEMA_VERSION = 2
 
 
 def compute_signature(
     *,
-    schema_version: int,
     dataset_repo_id: str,
-    dataset_revision: str | None,
-    episodes: list[int] | None,
     value_network_pretrained_path: str,
     c_fail: float,
     num_value_bins: int,
@@ -50,73 +29,22 @@ def compute_signature(
     maha_stats_path: str | None = None,
 ) -> str:
     """Build a deterministic 16-hex-char signature over all cache-affecting inputs."""
-    dataset_sha = resolve_hub_sha(dataset_repo_id, "dataset", dataset_revision)
-    vn_id = value_network_pretrained_path
-    vn_sha = resolve_hub_sha(vn_id, "model")
-    maha_stats_sha = (
-        resolve_hub_sha(maha_stats_path, "model")
-        if reward_mode == "maha" and maha_stats_path is not None
-        else None
-    )
-
     sig_dict = {
-        "schema_version": schema_version,
+        "schema_version": CACHE_SCHEMA_VERSION,
         "dataset_repo_id": dataset_repo_id,
-        "dataset_revision": dataset_revision,
-        "dataset_sha": dataset_sha,
-        "episodes": sorted(episodes) if episodes else None,
-        "vn_id": vn_id,
-        "vn_sha": vn_sha,
+        "value_network_pretrained_path": value_network_pretrained_path,
         "c_fail": c_fail,
         "num_value_bins": num_value_bins,
         "reward_mode": reward_mode,
         "maha_stats_path": maha_stats_path if reward_mode == "maha" else None,
-        "maha_stats_sha": maha_stats_sha,
     }
     canonical = json.dumps(sig_dict, sort_keys=True)
     return hashlib.sha256(canonical.encode()).hexdigest()[:16]
 
 
-def try_download(repo_id: str, signature: str) -> Path | None:
-    """Try to fetch a signature-keyed advantage cache from HF Hub."""
-    from huggingface_hub import hf_hub_download
-    from huggingface_hub.errors import EntryNotFoundError, RepositoryNotFoundError
-
-    filename = f"advantage_cache_{signature}.json"
-    try:
-        path = hf_hub_download(repo_id=repo_id, filename=filename, repo_type="dataset")
-        logging.info(f"Downloaded advantage cache from hub: {repo_id}/{filename}")
-        return Path(path)
-    except (EntryNotFoundError, RepositoryNotFoundError):
-        logging.info(
-            f"No cached advantages on hub for signature {signature} in {repo_id}"
-        )
-        return None
-    except Exception as exc:  # noqa: BLE001
-        logging.warning(f"Failed to download cached advantages from hub: {exc}")
-        return None
-
-
-def upload(local_path: str | Path, repo_id: str, signature: str) -> None:
-    """Upload an advantage cache file to HF Hub under a signature-keyed filename."""
-    from huggingface_hub import HfApi
-
-    filename = f"advantage_cache_{signature}.json"
-    try:
-        api = HfApi()
-        api.create_repo(repo_id, repo_type="dataset", exist_ok=True)
-        api.upload_file(
-            path_or_fileobj=str(local_path),
-            path_in_repo=filename,
-            repo_id=repo_id,
-            repo_type="dataset",
-        )
-        logging.info(f"Uploaded advantage cache to hub: {repo_id}/{filename}")
-    except Exception as exc:  # noqa: BLE001
-        logging.warning(
-            f"Failed to upload advantage cache to {repo_id}/{filename}: {exc}. "
-            "Continuing with local-only cache."
-        )
+def cache_path(signature: str) -> Path:
+    """Local path where a signature-keyed advantage cache lives."""
+    return ADVANTAGE_CACHE_DIR / f"{signature}.json"
 
 
 def save(

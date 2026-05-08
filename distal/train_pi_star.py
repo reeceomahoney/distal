@@ -46,6 +46,7 @@ from lerobot.envs.configs import LiberoEnv
 from lerobot.envs.factory import make_env_pre_post_processors
 from lerobot.utils.constants import ACTION, OBS_LANGUAGE_TOKENS
 from lerobot.utils.feature_utils import dataset_to_policy_features
+from lerobot_policy_pistar06.configuration_pistar06 import PiStar06Config
 from lerobot_policy_pistar06.modeling_pistar06 import PiStar06Policy
 from torch.nn.utils import clip_grad_norm_
 from torch.utils.data import DataLoader
@@ -56,96 +57,61 @@ from distal.sim_eval import resolve_eval_task_ids, run_sim_eval
 from distal.value_model import RECAPValueConfig, RECAPValueNetwork
 
 
-def _log_memory(label: str) -> None:
-    """Log CPU RSS and CUDA memory at a named checkpoint."""
-    rss_mb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024
-    parts = [f"[MEM {label}] CPU_RSS={rss_mb:.0f}MB"]
-    if torch.cuda.is_available():
-        alloc = torch.cuda.memory_allocated() / (1024**2)
-        reserved = torch.cuda.memory_reserved() / (1024**2)
-        parts.append(f"CUDA_alloc={alloc:.0f}MB CUDA_reserved={reserved:.0f}MB")
-    logging.info(" ".join(parts))
+@dataclass
+class AdvantageConfig:
+    """Runtime advantage-conditioning options.
+
+    Policy-level knobs (enable_advantage_conditioning, c_fail,
+    advantage_threshold, advantage_dropout, cfg_beta) live on PiStar06Config
+    and are accessed via ``cfg.policy.*`` — override on the CLI as e.g.
+    ``--policy.advantage_threshold=0.05``.
+
+    ``c_fail`` and ``num_value_bins`` are pulled from the value network at
+    runtime and are not user-facing knobs.
+    """
+
+    value_network_pretrained_path: str = "reece-omahoney/value-maha-libero-plus"
+
+    # When set, override ``policy.advantage_threshold`` with the Nth percentile
+    # of the precomputed advantage distribution (~30% positive at p=70).
+    threshold_percentile: float | None = 70.0
+
+    # Value network advantage precomputation batch size
+    vn_batch_size: int = 640
+
+    # Cache pre-computed advantages locally at
+    # ``$HF_ASSETS_CACHE/distal/advantages/<signature>.json``, content-addressed
+    # by every input that affects the result. Set to False to always recompute.
+    cache: bool = True
 
 
 @dataclass
 class RECAPPiStarTrainingConfig:
     """Configuration for RECAP PiStar06 advantage-conditioned Pi0.5 policy training."""
 
+    job_name: str = "pistar06-libero-plus-maha"
     repo_id: str = "reece-omahoney/pi05-libero-plus"
-    value_network_pretrained_path: str = "reece-omahoney/value-maha-libero-plus"
-    root: str | None = None
-    revision: str | None = None
-    episodes: list[int] | None = None
 
-    epochs: int = 5
-    batch_size: int = 128
+    train_steps: int = 20_000
+    batch_size: int = 64
     num_workers: int = 8
-    learning_rate: float = 1e-4
-    decay_learning_rate: float = 1e-5
-    lr_decay: bool = False
-    weight_decay: float = 1e-8
-    warmup_steps: int = 1000
-    max_grad_norm: float = 1.0
     val_split_ratio: float = 0.1
     seed: int = 42
     device: str = "auto"
-    max_train_steps_per_epoch: int | None = None
-    max_val_steps_per_epoch: int | None = None
-    log_every_n_steps: int = 10
-    validate_every_n_train_steps: int = 1000
-    max_val_steps_per_step_validation: int | None = 50
+    log_every_n_steps: int = 100
+    max_val_steps: int | None = 50
     sim_eval_every_n_train_steps: int = 500
 
-    # Master switch: set to False to train vanilla Pi0.5 without advantage
-    # text injection (baseline for ablation experiments).
-    enable_advantage_conditioning: bool = True
-
-    # RECAP advantage conditioning
-    c_fail: float = 50.0
-    num_value_bins: int = 50
-    # Per-frame advantage threshold: only frames with advantage > threshold get
-    # "Advantage: positive" text.  The paper (Appendix A.4) sets this to a
-    # per-task percentile so that ~30% of frames are positive during pre-training
-    # and ~40% during fine-tuning.  Use advantage_threshold_percentile to compute
-    # this automatically from the advantage distribution; when set it overrides
-    # advantage_threshold after advantages are pre-computed.
-    advantage_threshold: float = 0.0
-    advantage_threshold_percentile: float | None = 70.0
-    advantage_dropout: float = 0.3
-    cfg_beta: float = 1.0
-
-    # Pi0.5 model settings
-    paligemma_variant: str = "gemma_2b"
-    action_expert_variant: str = "gemma_300m"
-    num_expert_layers: int = 0
-    pretrained_path: str = "lerobot/pi05-libero"
-    model_precision: str = "bfloat16"
-    freeze_vision_encoder: bool = True
-    freeze_backbone: bool = True
-    num_unfrozen_backbone_layers: int = 3
-    train_expert_only: bool = False
-    gradient_checkpointing: bool = True
-    gradient_accumulation_steps: int = 1
-
-    # Value network pre-computation
-    vn_batch_size: int = 640
-
-    # Maha-rewards re-computation (only used when the value network was trained
-    # with reward_mode="maha"; loads from the dataset-repo cache when present).
-    # Defaults mirror train_value.py since maha embedding runs the full Pi0.5
-    # backbone, not the value network's smaller VLM.
-    maha_embed_batch_size: int = 32
-    maha_embed_num_workers: int = 4
-
-    # Advantage caching: content-addressed cache keyed by a hash of the
-    # inputs that determine the precomputed advantages. Cache files are
-    # mirrored on HF Hub under ``advantage_cache_repo_id`` (set to None to
-    # disable remote cache). Bump ``advantage_cache_schema_version`` to
-    # invalidate all existing caches after a pipeline change that file
-    # hashes can't detect.
-    advantage_cache_repo_id: str | None = "reece-omahoney/advantage-caches"
-    advantage_cache_local_dir: str = "outputs"
-    advantage_cache_schema_version: int = 2
+    policy: PiStar06Config = field(
+        default_factory=lambda: PiStar06Config(
+            pretrained_path=Path("lerobot/pi05-libero"),
+            dtype="bfloat16",
+            n_action_steps=10,
+            gradient_checkpointing=True,
+            compile_model=True,
+        )
+    )
+    advantage: AdvantageConfig = field(default_factory=AdvantageConfig)
 
     # Sim eval — fat AsyncVectorEnv eval over LIBERO suites.  Two modes:
     #
@@ -176,14 +142,23 @@ class RECAPPiStarTrainingConfig:
     eval_n_envs_per_task: int = 0  # base-LIBERO only
     eval_n_episodes_per_task: int = 1
 
-    # Hub push for trained PiStar06 policy
-    pi_star_repo_id: str | None = "reece-omahoney/pistar06-libero-plus-maha"
+    # Hub push for trained policy
     push_to_hub: bool = True
 
     # Weights & Biases (optional; set wandb_project to enable)
     wandb_project: str | None = "distal"
     wandb_entity: str | None = None
-    wandb_run_name: str | None = "pistar06-libero-plus-maha"
+
+
+def _log_memory(label: str) -> None:
+    """Log CPU RSS and CUDA memory at a named checkpoint."""
+    rss_mb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024
+    parts = [f"[MEM {label}] CPU_RSS={rss_mb:.0f}MB"]
+    if torch.cuda.is_available():
+        alloc = torch.cuda.memory_allocated() / (1024**2)
+        reserved = torch.cuda.memory_reserved() / (1024**2)
+        parts.append(f"CUDA_alloc={alloc:.0f}MB CUDA_reserved={reserved:.0f}MB")
+    logging.info(" ".join(parts))
 
 
 def _init_wandb(cfg: RECAPPiStarTrainingConfig):
@@ -195,14 +170,14 @@ def _init_wandb(cfg: RECAPPiStarTrainingConfig):
     import wandb
 
     # Under a sweep agent, let wandb auto-generate a unique trial name
-    # rather than collapsing every trial to the same `wandb_run_name`.
+    # rather than collapsing every trial to the same `name`.
     in_sweep = "WANDB_SWEEP_ID" in os.environ
-    name = None if (in_sweep or not cfg.wandb_run_name) else cfg.wandb_run_name
+    wandb_name = None if (in_sweep or not cfg.job_name) else cfg.job_name
 
     run = wandb.init(
         project=cfg.wandb_project,
         entity=cfg.wandb_entity,
-        name=name,
+        name=wandb_name,
         config=asdict(cfg),
     )
     logging.info(f"W&B run: {run.url}")
@@ -234,13 +209,18 @@ def _load_vn_train_config(path_or_repo_id: str) -> dict:
         return json.load(f)
 
 
-def _build_policy_config(
+def _resolve_policy_config(
     cfg: RECAPPiStarTrainingConfig,
     train_dataset: LeRobotDataset,
-):
-    """Build a PiStar06Config from the training config and dataset metadata."""
-    from lerobot_policy_pistar06.configuration_pistar06 import PiStar06Config
+    c_fail: float,
+) -> PiStar06Config:
+    """Inject runtime-resolved fields onto cfg.policy and return it.
 
+    Static knobs (architecture, dtype, advantage_dropout, cfg_beta, …) come
+    from cfg.policy via CLI overrides; this helper only sets the fields that
+    can't be defaulted (input/output features from the dataset, c_fail from
+    the value network).
+    """
     features = dataset_to_policy_features(train_dataset.meta.features)
     output_features = {
         key: ft for key, ft in features.items() if ft.type is FeatureType.ACTION
@@ -248,79 +228,11 @@ def _build_policy_config(
     input_features = {
         key: ft for key, ft in features.items() if key not in output_features
     }
-
-    policy_cfg = PiStar06Config(
-        input_features=input_features,
-        output_features=output_features,
-        paligemma_variant=cfg.paligemma_variant,
-        action_expert_variant=cfg.action_expert_variant,
-        num_expert_layers=cfg.num_expert_layers,
-        dtype=cfg.model_precision,
-        freeze_vision_encoder=cfg.freeze_vision_encoder,
-        train_expert_only=cfg.train_expert_only,
-        gradient_checkpointing=cfg.gradient_checkpointing,
-        c_fail=cfg.c_fail,
-        advantage_threshold=cfg.advantage_threshold,
-        advantage_dropout=cfg.advantage_dropout,
-        cfg_beta=cfg.cfg_beta,
-        enable_advantage_conditioning=cfg.enable_advantage_conditioning,
-    )
+    cfg.policy.input_features = input_features
+    cfg.policy.output_features = output_features
+    cfg.policy.c_fail = c_fail
+    policy_cfg = cfg.policy
     return policy_cfg
-
-
-# ── Backbone freezing ────────────────────────────────────────────────────────
-
-
-def _apply_backbone_freezing(policy, cfg: RECAPPiStarTrainingConfig) -> None:
-    """Freeze the PaliGemma VLM backbone, optionally unfreezing the last N layers.
-
-    Mirrors the partial-unfreeze pattern used in RECAPValueNetwork.
-    """
-    if not cfg.freeze_backbone:
-        return
-
-    paligemma = policy.model.paligemma_with_expert.paligemma
-    paligemma.eval()
-    for param in paligemma.parameters():
-        param.requires_grad = False
-
-    if cfg.num_unfrozen_backbone_layers > 0:
-        lm = paligemma.model.language_model
-        lm_inner = lm.model if hasattr(lm, "model") else lm
-        layers = lm_inner.layers
-        num_layers = len(layers)
-        if cfg.num_unfrozen_backbone_layers > num_layers:
-            raise ValueError(
-                f"num_unfrozen_backbone_layers={cfg.num_unfrozen_backbone_layers} "
-                f"exceeds available layers {num_layers}"
-            )
-        unfrozen = layers[-cfg.num_unfrozen_backbone_layers :]
-        for layer in unfrozen:
-            layer.train()
-            for param in layer.parameters():
-                param.requires_grad = True
-        logging.info(
-            "Backbone frozen; unfreezing last "
-            f"{cfg.num_unfrozen_backbone_layers}/{num_layers} "
-            "VLM language model layers"
-        )
-    else:
-        logging.info("Backbone fully frozen (all PaliGemma params)")
-
-
-def _restore_freeze_state(policy, cfg: RECAPPiStarTrainingConfig) -> None:
-    """Re-apply eval() to frozen backbone parts after a policy.train() call."""
-    if not cfg.freeze_backbone:
-        return
-
-    paligemma = policy.model.paligemma_with_expert.paligemma
-    paligemma.eval()
-
-    if cfg.num_unfrozen_backbone_layers > 0:
-        lm = paligemma.model.language_model
-        lm_inner = lm.model if hasattr(lm, "model") else lm
-        for layer in lm_inner.layers[-cfg.num_unfrozen_backbone_layers :]:
-            layer.train()
 
 
 # ── Advantage pre-computation ────────────────────────────────────────────────
@@ -722,9 +634,6 @@ def run_recap_pistar_train_val(cfg: RECAPPiStarTrainingConfig) -> None:
     # ── 1. Load dataset and build episode-level train/val split ──────────
     full_dataset = LeRobotDataset(
         repo_id=cfg.repo_id,
-        root=cfg.root,
-        revision=cfg.revision,
-        episodes=cfg.episodes,
         vcodec="auto",
     )
 
@@ -737,42 +646,37 @@ def run_recap_pistar_train_val(cfg: RECAPPiStarTrainingConfig) -> None:
     vn_reward_mode: str = "steps"
     vn_maha_stats_path: str | None = None
     vn_base_policy: str | None = None
-    if cfg.enable_advantage_conditioning:
-        # Pull num_value_bins from the VN policy config and c_fail / reward_mode
-        # / maha_stats_path from its train_config.json so the return targets used
-        # here match what the value network was trained against.
+    c_fail: float = 50.0
+    num_value_bins: int = 50
+    if cfg.policy.enable_advantage_conditioning:
+        # Pull num_value_bins, c_fail, and reward config from the value network
+        # so the return targets used here match what the VN was trained against.
         vn_policy_cfg = PreTrainedConfig.from_pretrained(
-            cfg.value_network_pretrained_path
+            cfg.advantage.value_network_pretrained_path
         )
         assert isinstance(vn_policy_cfg, RECAPValueConfig)
-        if vn_policy_cfg.num_value_bins != cfg.num_value_bins:
-            logging.warning(
-                f"Overriding num_value_bins from {cfg.num_value_bins} -> "
-                f"{vn_policy_cfg.num_value_bins} to match value network"
-            )
-            cfg.num_value_bins = int(vn_policy_cfg.num_value_bins)
+        num_value_bins = int(vn_policy_cfg.num_value_bins)
 
-        vn_train_cfg = _load_vn_train_config(cfg.value_network_pretrained_path)
-        vn_c_fail = vn_train_cfg.get("c_fail")
-        if vn_c_fail is not None and vn_c_fail != cfg.c_fail:
-            logging.warning(
-                f"Overriding c_fail from {cfg.c_fail} -> {vn_c_fail} "
-                "to match value network"
-            )
-            cfg.c_fail = float(vn_c_fail)
+        vn_train_cfg = _load_vn_train_config(
+            cfg.advantage.value_network_pretrained_path
+        )
+        c_fail = float(vn_train_cfg.get("c_fail", c_fail))
 
-        vn_reward_mode = str(vn_train_cfg.get("reward_mode", "steps"))
-        vn_maha_stats_path = vn_train_cfg.get("maha_stats_path")
-        vn_base_policy = vn_train_cfg.get("base_policy")
+        vn_reward_cfg = vn_train_cfg.get("reward") or {}
+        vn_reward_mode = str(vn_reward_cfg.get("type", "steps"))
+        vn_maha_stats_path = vn_reward_cfg.get("stats_path")
+        vn_base_policy = vn_reward_cfg.get("base_policy")
         logging.info(
-            f"Value network reward_mode={vn_reward_mode!r} "
-            f"maha_stats_path={vn_maha_stats_path!r} "
+            f"Pulled from value network: c_fail={c_fail} "
+            f"num_value_bins={num_value_bins} "
+            f"reward.type={vn_reward_mode!r} "
+            f"stats_path={vn_maha_stats_path!r} "
             f"base_policy={vn_base_policy!r}"
         )
         if vn_reward_mode == "maha" and vn_maha_stats_path is None:
             raise ValueError(
-                "Value network was trained with reward_mode='maha' but its "
-                "train_config.json is missing 'maha_stats_path'; cannot "
+                "Value network was trained with reward.type='maha' but its "
+                "train_config.json is missing reward.stats_path; cannot "
                 "reconstruct the per-step rewards used to build R_t."
             )
     else:
@@ -780,13 +684,13 @@ def run_recap_pistar_train_val(cfg: RECAPPiStarTrainingConfig) -> None:
             "Advantage conditioning DISABLED — training vanilla Pi0.5 "
             "(no value network, no advantage text injection)"
         )
-        cfg.advantage_dropout = 1.0
+        cfg.policy.advantage_dropout = 1.0
 
     step_rewards: dict[int, float] | None = None
-    if cfg.enable_advantage_conditioning and vn_reward_mode == "maha":
+    if cfg.policy.enable_advantage_conditioning and vn_reward_mode == "maha":
         from distal.rewards.maha import load_or_compute_maha_rewards
 
-        embed_policy_path = vn_base_policy or cfg.pretrained_path
+        embed_policy_path = vn_base_policy or str(cfg.policy.pretrained_path)
         logging.info(
             "Loading or computing Mahalanobis-distance rewards to match the "
             f"value network's training signal (embed policy: {embed_policy_path}, "
@@ -797,15 +701,15 @@ def run_recap_pistar_train_val(cfg: RECAPPiStarTrainingConfig) -> None:
             policy_path=embed_policy_path,
             stats_path=vn_maha_stats_path,  # ty: ignore[invalid-argument-type]
             device=device,
-            batch_size=cfg.maha_embed_batch_size,
-            num_workers=cfg.maha_embed_num_workers,
+            batch_size=int(vn_reward_cfg.get("embed_batch_size", 32)),
+            num_workers=int(vn_reward_cfg.get("embed_num_workers", 4)),
         )
 
     frame_targets = base._build_frame_targets(
         dataset=full_dataset,
         success_by_episode=success_by_episode,
-        c_fail=cfg.c_fail,
-        num_value_bins=cfg.num_value_bins,
+        c_fail=c_fail,
+        num_value_bins=num_value_bins,
         step_rewards=step_rewards,
     )
     train_targets, val_targets = base._split_train_val_targets(
@@ -822,36 +726,27 @@ def run_recap_pistar_train_val(cfg: RECAPPiStarTrainingConfig) -> None:
     )
 
     # ── 2. Build policy config and preprocessor ────────────────────────────
-    policy_cfg = _build_policy_config(cfg, full_dataset)
-    policy_cfg.n_action_steps = 10
+    policy_cfg = _resolve_policy_config(cfg, full_dataset, c_fail=c_fail)
     _log_memory("post-dataset-split")
 
     # ── 3. Pre-compute advantages using Pi0.5-based value network ────────
-    if cfg.enable_advantage_conditioning:
+    if cfg.policy.enable_advantage_conditioning:
         signature = advantage_cache.compute_signature(
-            schema_version=cfg.advantage_cache_schema_version,
             dataset_repo_id=cfg.repo_id,
-            dataset_revision=cfg.revision,
-            episodes=cfg.episodes,
-            value_network_pretrained_path=cfg.value_network_pretrained_path,
-            c_fail=cfg.c_fail,
-            num_value_bins=cfg.num_value_bins,
+            value_network_pretrained_path=cfg.advantage.value_network_pretrained_path,
+            c_fail=c_fail,
+            num_value_bins=num_value_bins,
             reward_mode=vn_reward_mode,
             maha_stats_path=vn_maha_stats_path,
         )
-        logging.info(f"Advantage cache signature: {signature}")
+        cache_file = advantage_cache.cache_path(signature)
+        logging.info(f"Advantage cache signature: {signature} -> {cache_file}")
 
-        cache_file: Path | None = None
-        if cfg.advantage_cache_repo_id:
-            cache_file = advantage_cache.try_download(
-                cfg.advantage_cache_repo_id, signature
-            )
-
-        if cache_file is not None:
+        if cfg.advantage.cache and cache_file.is_file():
             advantage_lookup, _ = advantage_cache.load(cache_file)
         else:
             vn_model = RECAPValueNetwork.from_pretrained(
-                cfg.value_network_pretrained_path
+                cfg.advantage.value_network_pretrained_path
             )
             advantage_lookup, episode_lookup = _precompute_advantages(
                 full_dataset=full_dataset,
@@ -859,45 +754,37 @@ def run_recap_pistar_train_val(cfg: RECAPPiStarTrainingConfig) -> None:
                 value_network=vn_model,
                 policy_cfg=policy_cfg,
                 device=device,
-                batch_size=cfg.vn_batch_size,
+                batch_size=cfg.advantage.vn_batch_size,
             )
-
-            local_cache_path = (
-                Path(cfg.advantage_cache_local_dir)
-                / f"advantage_cache_{signature}.json"
-            )
-            advantage_cache.save(
-                local_cache_path,
-                advantage_lookup,
-                episode_lookup=episode_lookup,
-                metadata={
-                    "signature": signature,
-                    "schema_version": cfg.advantage_cache_schema_version,
-                    "value_network_pretrained_path": cfg.value_network_pretrained_path,
-                    "c_fail": cfg.c_fail,
-                    "num_value_bins": cfg.num_value_bins,
-                    "reward_mode": vn_reward_mode,
-                    "maha_stats_path": vn_maha_stats_path,
-                    "repo_id": cfg.repo_id,
-                    "success_by_episode": success_by_episode,
-                },
-            )
-            if cfg.advantage_cache_repo_id:
-                advantage_cache.upload(
-                    local_cache_path, cfg.advantage_cache_repo_id, signature
+            if cfg.advantage.cache:
+                advantage_cache.save(
+                    cache_file,
+                    advantage_lookup,
+                    episode_lookup=episode_lookup,
+                    metadata={
+                        "signature": signature,
+                        "value_network_pretrained_path": (
+                            cfg.advantage.value_network_pretrained_path
+                        ),
+                        "c_fail": c_fail,
+                        "num_value_bins": num_value_bins,
+                        "reward_mode": vn_reward_mode,
+                        "maha_stats_path": vn_maha_stats_path,
+                        "repo_id": cfg.repo_id,
+                        "success_by_episode": success_by_episode,
+                    },
                 )
         _log_memory("post-advantage-precompute")
 
         # ── 3b. Auto-compute advantage threshold from percentile ─────────
-        if cfg.advantage_threshold_percentile is not None:
-            cfg.advantage_threshold = _compute_advantage_threshold(
-                advantage_lookup, cfg.advantage_threshold_percentile
+        if cfg.advantage.threshold_percentile is not None:
+            cfg.policy.advantage_threshold = _compute_advantage_threshold(
+                advantage_lookup, cfg.advantage.threshold_percentile
             )
-            policy_cfg.advantage_threshold = cfg.advantage_threshold
         else:
             logging.info(
-                f"Using fixed advantage_threshold={cfg.advantage_threshold:.5f} "
-                f"(advantage_threshold_percentile is None)"
+                f"Using fixed advantage_threshold={cfg.policy.advantage_threshold:.5f} "
+                f"(advantage.threshold_percentile is None)"
             )
     else:
         advantage_lookup: dict[int, float] = {}
@@ -915,16 +802,12 @@ def run_recap_pistar_train_val(cfg: RECAPPiStarTrainingConfig) -> None:
 
     train_dataset = LeRobotDataset(
         repo_id=cfg.repo_id,
-        root=cfg.root,
-        revision=cfg.revision,
         episodes=train_ep_ids,
         delta_timestamps=delta_timestamps,
         vcodec="auto",
     )
     val_dataset = LeRobotDataset(
         repo_id=cfg.repo_id,
-        root=cfg.root,
-        revision=cfg.revision,
         episodes=val_ep_ids,
         delta_timestamps=delta_timestamps,
         vcodec="auto",
@@ -933,9 +816,7 @@ def run_recap_pistar_train_val(cfg: RECAPPiStarTrainingConfig) -> None:
     # ── 5. Create policy ─────────────────────────────────────────────────
     # Initialize model weights in the target precision to halve peak memory
     # and speed up weight init (random normal on smaller tensors).
-    target_dtype = (
-        torch.bfloat16 if cfg.model_precision == "bfloat16" else torch.float32
-    )
+    target_dtype = torch.bfloat16 if cfg.policy.dtype == "bfloat16" else torch.float32
     original_dtype = torch.get_default_dtype()
     torch.set_default_dtype(target_dtype)
     try:
@@ -944,17 +825,18 @@ def run_recap_pistar_train_val(cfg: RECAPPiStarTrainingConfig) -> None:
         torch.set_default_dtype(original_dtype)
     _log_memory("post-policy-init")
 
-    if cfg.pretrained_path is not None:
-        logging.info(f"Loading pretrained Pi0.5 weights from {cfg.pretrained_path}")
+    if cfg.policy.pretrained_path is not None:
+        pretrained_path = str(cfg.policy.pretrained_path)
+        logging.info(f"Loading pretrained Pi0.5 weights from {pretrained_path}")
         from safetensors.torch import load_file
 
-        local_safetensors = Path(cfg.pretrained_path).expanduser() / "model.safetensors"
+        local_safetensors = Path(pretrained_path).expanduser() / "model.safetensors"
         if local_safetensors.is_file():
             resolved_file = str(local_safetensors)
         else:
             from transformers.utils import cached_file
 
-            resolved_file = cached_file(cfg.pretrained_path, "model.safetensors")
+            resolved_file = cached_file(pretrained_path, "model.safetensors")
         raw_sd = load_file(resolved_file)  # ty:ignore[invalid-argument-type]
         fixed_sd = policy._fix_pytorch_state_dict_keys(raw_sd, policy.config)
         del raw_sd
@@ -981,7 +863,6 @@ def run_recap_pistar_train_val(cfg: RECAPPiStarTrainingConfig) -> None:
     _log_memory("post-pretrained-load")
 
     policy.to(device)
-    _apply_backbone_freezing(policy, cfg)
     _log_memory("post-policy-to-device")
 
     num_trainable = sum(p.numel() for p in policy.parameters() if p.requires_grad)
@@ -1035,13 +916,14 @@ def run_recap_pistar_train_val(cfg: RECAPPiStarTrainingConfig) -> None:
     # ── 6. Create dataloaders ────────────────────────────────────────────
     train_sampler = None
     train_shuffle = True
-    if hasattr(policy_cfg, "drop_n_last_frames"):
+    drop_n_last_frames = getattr(policy_cfg, "drop_n_last_frames", None)
+    if drop_n_last_frames is not None:
         train_shuffle = False
         train_sampler = EpisodeAwareSampler(
             train_dataset.meta.episodes["dataset_from_index"],
             train_dataset.meta.episodes["dataset_to_index"],
             episode_indices_to_use=train_dataset.episodes,
-            drop_n_last_frames=policy_cfg.drop_n_last_frames,
+            drop_n_last_frames=int(drop_n_last_frames),
             shuffle=True,
         )
 
@@ -1059,260 +941,183 @@ def run_recap_pistar_train_val(cfg: RECAPPiStarTrainingConfig) -> None:
         val_dataset,
         batch_size=cfg.batch_size,
         shuffle=False,
-        num_workers=cfg.num_workers,
-        pin_memory=(device.type == "cuda"),
-        drop_last=False,
-        prefetch_factor=2 if cfg.num_workers > 0 else None,
-    )
-    step_val_loader = DataLoader(
-        val_dataset,
-        batch_size=cfg.batch_size,
-        shuffle=False,
         num_workers=0,
         pin_memory=(device.type == "cuda"),
         drop_last=False,
     )
 
-    # ── 7. Optimizer and scheduler ──────────────────────────────────────
+    # ── 7. Optimizer and scheduler (pi05 presets) ───────────────────────
+    from lerobot.policies.pi05.configuration_pi05 import PI05Config
+
     trainable_params = policy.get_optim_params()
-    optimizer = torch.optim.AdamW(
-        trainable_params,
-        lr=cfg.learning_rate,
-        betas=(0.9, 0.95),
-        weight_decay=cfg.weight_decay,
-    )
-    steps_per_epoch = cfg.max_train_steps_per_epoch or len(train_loader)
-    total_steps = max(cfg.warmup_steps + 1, cfg.epochs * steps_per_epoch)
-    warmup_scheduler = torch.optim.lr_scheduler.LinearLR(
-        optimizer, start_factor=1e-8, end_factor=1.0, total_iters=cfg.warmup_steps
-    )
-    if cfg.lr_decay:
-        post_warmup_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-            optimizer,
-            T_max=total_steps - cfg.warmup_steps,
-            eta_min=cfg.decay_learning_rate,
-        )
-    else:
-        post_warmup_scheduler = torch.optim.lr_scheduler.ConstantLR(
-            optimizer, factor=1.0, total_iters=total_steps - cfg.warmup_steps
-        )
-    scheduler = torch.optim.lr_scheduler.SequentialLR(
-        optimizer,
-        schedulers=[warmup_scheduler, post_warmup_scheduler],
-        milestones=[cfg.warmup_steps],
+    pi05_defaults = PI05Config()
+    optimizer_preset = pi05_defaults.get_optimizer_preset()
+    scheduler_preset = pi05_defaults.get_scheduler_preset()
+    max_grad_norm = optimizer_preset.grad_clip_norm
+    optimizer = optimizer_preset.build(trainable_params)
+    scheduler = scheduler_preset.build(optimizer, num_training_steps=cfg.train_steps)
+    logging.info(
+        "Using pi05 optimizer/scheduler presets: "
+        f"lr={optimizer_preset.lr} betas={optimizer_preset.betas} "
+        f"eps={optimizer_preset.eps} wd={optimizer_preset.weight_decay} "
+        f"grad_clip={max_grad_norm} "
+        f"warmup={scheduler_preset.num_warmup_steps} "
+        f"decay={scheduler_preset.num_decay_steps} "
+        f"decay_lr={scheduler_preset.decay_lr} "
+        f"train_steps={cfg.train_steps}"
     )
 
     # ── 8. Training loop ─────────────────────────────────────────────────
     best_pc_success = -1.0
     history: list[dict] = []
-    global_train_step = 0
-
-    if cfg.validate_every_n_train_steps < 0:
-        raise ValueError(
-            "validate_every_n_train_steps must be >= 0, got "
-            f"{cfg.validate_every_n_train_steps}"
-        )
+    skipped_batches = 0
+    nan_val_metrics = {
+        "val_loss": float("nan"),
+        "val_loss_pos": float("nan"),
+        "val_loss_neg": float("nan"),
+        "val_n_pos": 0,
+        "val_n_neg": 0,
+        "val_conditioning_accuracy": float("nan"),
+        "val_conditioning_gap": float("nan"),
+        "val_conditioning_gap_pos": float("nan"),
+        "val_conditioning_gap_neg": float("nan"),
+        "val_adv_episode_alignment": float("nan"),
+        "val_alignment_on_success": float("nan"),
+        "val_alignment_on_failure": float("nan"),
+    }
 
     logging.info(
-        f"Starting training: {cfg.epochs} epochs, "
+        f"Starting training: {cfg.train_steps} steps, "
         f"{len(train_dataset)} train frames, {len(val_dataset)} val frames"
     )
     _log_memory("pre-training-loop")
 
-    for epoch in range(1, cfg.epochs + 1):
-        policy.train()
-        _restore_freeze_state(policy, cfg)
-        epoch_loss = 0.0
-        epoch_samples = 0
-        epoch_start = time_module.perf_counter()
-        last_log_time = epoch_start
-        last_log_samples = 0
-        skipped_batches = 0
+    train_iter = base.cycle(train_loader)
+    policy.train()
+    optimizer.zero_grad(set_to_none=True)
 
-        train_iter = iter(train_loader)
-        step = -1
+    start_time = time_module.perf_counter()
+    last_log_step = 0
+    last_log_time = start_time
+
+    for global_step in range(1, cfg.train_steps + 1):
+        # Pull a batch with retry on known video decode errors.
         while True:
             try:
                 batch = next(train_iter)
-            except StopIteration:
                 break
             except RuntimeError as exc:
                 if not base._is_known_video_validation_error(exc):
                     raise
                 skipped_batches += 1
                 logging.warning(
-                    f"[Epoch {epoch}] Skipping training batch due to video "
-                    f"decode error (skipped {skipped_batches} so far): {exc}"
+                    f"[step {global_step}] Skipping training batch due to "
+                    f"video decode error (skipped {skipped_batches} so far): {exc}"
                 )
-                continue
-            step += 1
 
-            if (
-                cfg.max_train_steps_per_epoch is not None
-                and step >= cfg.max_train_steps_per_epoch
-            ):
-                break
+        batch = preprocessor(batch)
+        batch = _inject_advantages(batch, advantage_lookup, device)
 
-            batch = preprocessor(batch)
-            batch = _inject_advantages(batch, advantage_lookup, device)
+        with torch.autocast(device_type=device.type, dtype=torch.bfloat16):
+            loss, output_dict = policy.forward(batch)
 
-            with torch.autocast(device_type=device.type, dtype=torch.bfloat16):
-                loss, output_dict = policy.forward(batch)
-                if cfg.gradient_accumulation_steps > 1:
-                    loss = loss / cfg.gradient_accumulation_steps
+        loss.backward()
+        if max_grad_norm > 0:
+            clip_grad_norm_(trainable_params, max_grad_norm)
+        optimizer.step()
+        optimizer.zero_grad(set_to_none=True)
+        scheduler.step()
 
-            loss.backward()
+        if global_step == 1:
+            _log_memory("first-train-step")
 
-            if (step + 1) % cfg.gradient_accumulation_steps == 0 or step == len(
-                train_loader
-            ) - 1:
-                if cfg.max_grad_norm > 0:
-                    clip_grad_norm_(trainable_params, cfg.max_grad_norm)
-                optimizer.step()
-                optimizer.zero_grad()
-                scheduler.step()
+        step_loss = float(loss.item())
+        wandb_step_metrics: dict[str, float] = {}
 
-            unscaled_loss = loss.item() * (
-                cfg.gradient_accumulation_steps
-                if cfg.gradient_accumulation_steps > 1
-                else 1
+        # ── Sim eval (independent cadence) ────────────────────────────
+        if (
+            cfg.sim_eval_every_n_train_steps > 0
+            and global_step % cfg.sim_eval_every_n_train_steps == 0
+        ):
+            step_eval_metrics = run_sim_eval(
+                policy=policy,
+                env_preprocessor=env_preprocessor,
+                env_postprocessor=env_postprocessor,
+                preprocessor=preprocessor,
+                postprocessor=postprocessor,
+                suites=cfg.eval_suites,
+                is_libero_plus=cfg.is_libero_plus,
+                fps=cfg.eval_fps,
+                observation_height=cfg.eval_observation_height,
+                observation_width=cfg.eval_observation_width,
+                per_cell=cfg.eval_per_cell,
+                task_seed=cfg.eval_task_seed,
+                base_task=cfg.eval_base_task,
+                max_tasks=cfg.eval_max_tasks,
+                parallel_envs=cfg.eval_parallel_envs,
+                n_envs_per_task=cfg.eval_n_envs_per_task,
+                n_episodes_per_task=cfg.eval_n_episodes_per_task,
+                seed=cfg.seed,
+                videos_dir=output_dir / "eval" / f"videos_step_{global_step}",
+                wandb_run=wandb_run,
+                wandb_step=global_step,
             )
-            epoch_loss += unscaled_loss * batch[ACTION].shape[0]
-            epoch_samples += batch[ACTION].shape[0]
-            global_train_step += 1
+            wandb_step_metrics.update(
+                {f"eval/{k}": v for k, v in step_eval_metrics.items()}
+            )
 
-            if global_train_step == 1:
-                _log_memory("first-train-step")
+            pc_success = step_eval_metrics["pc_success"]
+            if pc_success > best_pc_success:
+                best_pc_success = pc_success
+                best_checkpoint = {
+                    "global_train_step": global_step,
+                    "model_state_dict": policy.state_dict(),
+                    "optimizer_state_dict": optimizer.state_dict(),
+                    "policy_config": policy_cfg,
+                    "train_config": asdict(cfg),
+                    "metrics": step_eval_metrics,
+                }
+                torch.save(best_checkpoint, checkpoints_dir / "best.pt")
+                logging.info(f"New best pc_success: {best_pc_success:.4f}")
 
-            wandb_step_metrics: dict[str, float] = {}
+            policy.train()
 
-            if (
-                cfg.log_every_n_steps > 0
-                and global_train_step % cfg.log_every_n_steps == 0
-            ):
-                avg_loss = (
-                    epoch_loss / epoch_samples if epoch_samples > 0 else float("nan")
-                )
-                lr = optimizer.param_groups[0]["lr"]
-                now = time_module.perf_counter()
-                elapsed = now - epoch_start
-                interval_elapsed = now - last_log_time
-                interval_samples = epoch_samples - last_log_samples
-                samples_per_sec = (
-                    interval_samples / interval_elapsed
-                    if interval_elapsed > 0
-                    else float("nan")
-                )
-                last_log_time = now
-                last_log_samples = epoch_samples
-                logging.info(
-                    f"[Epoch {epoch}/{cfg.epochs} step {step + 1}] "
-                    f"train_loss={avg_loss:.5f} lr={lr:.2e} elapsed={elapsed:.1f}s "
-                    f"samples/s={samples_per_sec:.1f} "
-                    f"global_step={global_train_step}"
-                )
-                wandb_step_metrics.update(
-                    {
-                        "train/loss": avg_loss,
-                        "train/lr": lr,
-                        "train/step_loss": loss.item(),
-                        "train/samples_per_sec": samples_per_sec,
-                        "global_step": global_train_step,
-                    }
-                )
-
-            # Step-based validation
-            if (
-                cfg.validate_every_n_train_steps > 0
-                and global_train_step % cfg.validate_every_n_train_steps == 0
-            ):
-                step_val_max = (
-                    cfg.max_val_steps_per_step_validation
-                    if cfg.max_val_steps_per_step_validation is not None
-                    else cfg.max_val_steps_per_epoch
-                )
-                step_val_metrics = _run_validation(
-                    policy,
-                    step_val_loader,
-                    preprocessor,
-                    advantage_lookup,
-                    success_by_episode,
-                    device,
-                    max_steps=step_val_max,
-                )
-                tag = (
-                    f"Epoch {epoch}/{cfg.epochs} step-validate "
-                    f"(global_step={global_train_step})"
-                )
-                _log_val_metrics(tag, step_val_metrics)
-                wandb_step_metrics.update(
-                    {f"val/{k}": v for k, v in step_val_metrics.items()}
-                )
-                policy.train()
-                _restore_freeze_state(policy, cfg)
-
-            # Step-based sim eval
-            if (
-                cfg.sim_eval_every_n_train_steps > 0
-                and global_train_step % cfg.sim_eval_every_n_train_steps == 0
-            ):
-                step_eval_metrics = run_sim_eval(
-                    policy=policy,
-                    env_preprocessor=env_preprocessor,
-                    env_postprocessor=env_postprocessor,
-                    preprocessor=preprocessor,
-                    postprocessor=postprocessor,
-                    suites=cfg.eval_suites,
-                    is_libero_plus=cfg.is_libero_plus,
-                    fps=cfg.eval_fps,
-                    observation_height=cfg.eval_observation_height,
-                    observation_width=cfg.eval_observation_width,
-                    per_cell=cfg.eval_per_cell,
-                    task_seed=cfg.eval_task_seed,
-                    base_task=cfg.eval_base_task,
-                    max_tasks=cfg.eval_max_tasks,
-                    parallel_envs=cfg.eval_parallel_envs,
-                    n_envs_per_task=cfg.eval_n_envs_per_task,
-                    n_episodes_per_task=cfg.eval_n_episodes_per_task,
-                    seed=cfg.seed,
-                    videos_dir=output_dir / "eval" / f"videos_step_{global_train_step}",
-                    wandb_run=wandb_run,
-                    wandb_step=global_train_step,
-                )
-                wandb_step_metrics.update(
-                    {f"eval/{k}": v for k, v in step_eval_metrics.items()}
-                )
-
-                pc_success = step_eval_metrics["pc_success"]
-                if pc_success > best_pc_success:
-                    best_pc_success = pc_success
-                    best_checkpoint = {
-                        "epoch": epoch,
-                        "global_train_step": global_train_step,
-                        "model_state_dict": policy.state_dict(),
-                        "optimizer_state_dict": optimizer.state_dict(),
-                        "policy_config": policy_cfg,
-                        "train_config": asdict(cfg),
-                        "metrics": step_eval_metrics,
-                    }
-                    torch.save(best_checkpoint, checkpoints_dir / "best.pt")
-                    logging.info(f"New best pc_success: {best_pc_success:.4f}")
-
-                policy.train()
-                _restore_freeze_state(policy, cfg)
-
+        is_log_step = (
+            global_step == 1
+            or global_step % cfg.log_every_n_steps == 0
+            or global_step == cfg.train_steps
+        )
+        if not is_log_step:
             if wandb_run is not None and wandb_step_metrics:
-                wandb_run.log(wandb_step_metrics, step=global_train_step)
+                wandb_run.log(wandb_step_metrics, step=global_step)
+            continue
 
-        train_loss = epoch_loss / epoch_samples if epoch_samples > 0 else float("nan")
+        # ── Train log ────────────────────────────────────────────────
+        now = time_module.perf_counter()
+        elapsed = now - start_time
+        window_elapsed = max(now - last_log_time, 1e-9)
+        steps_per_sec = (global_step - last_log_step) / window_elapsed
+        eta = max(cfg.train_steps - global_step, 0) / max(steps_per_sec, 1e-9)
+        lr = optimizer.param_groups[0]["lr"]
 
-        if skipped_batches > 0:
-            logging.warning(
-                f"[Epoch {epoch}] Skipped {skipped_batches} training batches "
-                "due to video decode errors"
-            )
+        logging.info(
+            f"[step {global_step}/{cfg.train_steps}] "
+            f"loss={step_loss:.5f} "
+            f"lr={lr:.2e} "
+            f"it/s={steps_per_sec:.2f} "
+            f"elapsed={base._format_duration(elapsed)} "
+            f"eta={base._format_duration(eta)}"
+        )
+        wandb_step_metrics.update(
+            {
+                "train/loss": step_loss,
+                "train/lr": lr,
+                "train/steps_per_sec": steps_per_sec,
+                "global_step": global_step,
+            }
+        )
 
-        # End-of-epoch validation
+        # ── Validate ─────────────────────────────────────────────────
         try:
             val_metrics = _run_validation(
                 policy,
@@ -1321,80 +1126,55 @@ def run_recap_pistar_train_val(cfg: RECAPPiStarTrainingConfig) -> None:
                 advantage_lookup,
                 success_by_episode,
                 device,
-                max_steps=cfg.max_val_steps_per_epoch,
+                max_steps=cfg.max_val_steps,
             )
         except Exception as error:  # noqa: BLE001
             if not base._is_known_video_validation_error(error):
+                policy.train()
                 raise
             logging.warning(
-                f"[Epoch {epoch}] Validation failed with video error; "
-                "retrying with num_workers=0."
+                f"[step {global_step}] Validation skipped due to persistent "
+                f"video decoding/timestamp errors: {error}"
             )
-            try:
-                val_metrics = _run_validation(
-                    policy,
-                    step_val_loader,
-                    preprocessor,
-                    advantage_lookup,
-                    success_by_episode,
-                    device,
-                    max_steps=cfg.max_val_steps_per_epoch,
-                )
-            except Exception as retry_error:  # noqa: BLE001
-                if not base._is_known_video_validation_error(retry_error):
-                    raise
-                logging.warning(f"[Epoch {epoch}] Validation skipped: {retry_error}")
-                val_metrics = {
-                    "val_loss": float("nan"),
-                    "val_loss_pos": float("nan"),
-                    "val_loss_neg": float("nan"),
-                    "val_n_pos": 0,
-                    "val_n_neg": 0,
-                    "val_conditioning_accuracy": float("nan"),
-                    "val_conditioning_gap": float("nan"),
-                    "val_conditioning_gap_pos": float("nan"),
-                    "val_conditioning_gap_neg": float("nan"),
-                    "val_adv_episode_alignment": float("nan"),
-                    "val_alignment_on_success": float("nan"),
-                    "val_alignment_on_failure": float("nan"),
-                }
+            val_metrics = dict(nan_val_metrics)
+        else:
+            _log_val_metrics(f"step {global_step}/{cfg.train_steps}", val_metrics)
+            wandb_step_metrics.update({f"val/{k}": v for k, v in val_metrics.items()})
 
-        _log_val_metrics(f"Epoch {epoch}/{cfg.epochs} epoch-end", val_metrics)
+        policy.train()
 
-        epoch_metrics = {
-            "epoch": epoch,
-            "train_loss": train_loss,
-            "lr": optimizer.param_groups[0]["lr"],
+        # ── History + checkpoint ─────────────────────────────────────
+        saved_metrics = {
+            "global_step": global_step,
+            "train_loss": step_loss,
+            "lr": lr,
             **val_metrics,
         }
-        history.append(epoch_metrics)
-
-        logging.info(
-            f"[Epoch {epoch}/{cfg.epochs}] "
-            f"train_loss={train_loss:.5f} "
-            f"val_loss={val_metrics['val_loss']:.5f} "
-            f"cond_acc={val_metrics['val_conditioning_accuracy']:.4f} "
-            f"cond_gap={val_metrics['val_conditioning_gap']:.5f}"
-        )
-        if wandb_run is not None:
-            wandb_run.log(
-                {f"epoch/{k}": v for k, v in epoch_metrics.items()},
-                step=global_train_step,
-            )
-
+        history.append(saved_metrics)
         base._save_json(output_dir / "metrics_history.json", history)
 
         checkpoint = {
-            "epoch": epoch,
-            "global_train_step": global_train_step,
+            "global_train_step": global_step,
             "model_state_dict": policy.state_dict(),
             "optimizer_state_dict": optimizer.state_dict(),
             "policy_config": policy_cfg,
             "train_config": asdict(cfg),
-            "metrics": epoch_metrics,
+            "metrics": saved_metrics,
         }
         torch.save(checkpoint, checkpoints_dir / "last.pt")
 
+        if wandb_run is not None and wandb_step_metrics:
+            wandb_run.log(wandb_step_metrics, step=global_step)
+
+        # Reset window AFTER validation/checkpoint so their wall time is not
+        # counted as training throughput in the next window.
+        last_log_step = global_step
+        last_log_time = time_module.perf_counter()
+
+    if skipped_batches > 0:
+        logging.warning(
+            f"Skipped {skipped_batches} training batches due to video decode errors"
+        )
     logging.info(f"Training complete. Best pc_success: {best_pc_success:.4f}")
 
     # ── 9. Export in HuggingFace pretrained format for inference ──────────
@@ -1403,11 +1183,12 @@ def run_recap_pistar_train_val(cfg: RECAPPiStarTrainingConfig) -> None:
     policy.save_pretrained(pretrained_dir)
     logging.info(f"Saved pretrained model to {pretrained_dir}")
 
-    if cfg.push_to_hub and cfg.pi_star_repo_id:
-        logging.info(f"Pushing PiStar06 policy to hub: {cfg.pi_star_repo_id}")
-        policy.push_to_hub(cfg.pi_star_repo_id)
-        preprocessor.push_to_hub(cfg.pi_star_repo_id)
-        postprocessor.push_to_hub(cfg.pi_star_repo_id)
+    if cfg.push_to_hub:
+        repo_id = f"reece-omahoney/{cfg.job_name}"
+        logging.info(f"Pushing PiStar06 policy to hub: {repo_id}")
+        policy.push_to_hub(repo_id)
+        preprocessor.push_to_hub(repo_id)
+        postprocessor.push_to_hub(repo_id)
 
     if wandb_run is not None:
         wandb_run.finish()
