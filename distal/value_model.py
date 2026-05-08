@@ -221,14 +221,14 @@ class RECAPValueNetwork(PreTrainedPolicy):
         Returns:
             Dictionary with value_logits, value_probs and expected_value.
         """
-        device = next(self.parameters()).device
         images = collect_images(batch, self.config.image_size)
         batch_size, n_cams = images.shape[:2]
+        device = images.device
 
         # SigLIP vision encoder → linear projection into text hidden dim
         vision_dtype = next(self.vision_tower.parameters()).dtype
         flat_images = images.reshape(batch_size * n_cams, *images.shape[2:]).to(
-            device=device, dtype=vision_dtype
+            dtype=vision_dtype
         )
         vision_outputs = self.vision_tower(pixel_values=flat_images)
         flat_img_emb = self.multi_modal_projector(vision_outputs.last_hidden_state)
@@ -241,8 +241,8 @@ class RECAPValueNetwork(PreTrainedPolicy):
         )
 
         # Language instruction embedding
-        input_ids = batch[OBS_LANGUAGE_TOKENS].to(device)
-        attention_mask = batch[OBS_LANGUAGE_ATTENTION_MASK].to(device)
+        input_ids = batch[OBS_LANGUAGE_TOKENS]
+        attention_mask = batch[OBS_LANGUAGE_ATTENTION_MASK]
         lang_emb = self.language_model.embed_tokens(input_ids)
         text_mask = attention_mask.bool()
 

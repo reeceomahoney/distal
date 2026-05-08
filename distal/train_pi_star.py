@@ -331,7 +331,11 @@ def _precompute_advantages(
         B = abs_indices.shape[0]
 
         batch = preprocessor(batch)
-        model_batch = {k: v for k, v in batch.items() if isinstance(v, torch.Tensor)}
+        model_batch = {
+            k: v.to(device, non_blocking=True)
+            for k, v in batch.items()
+            if isinstance(v, torch.Tensor)
+        }
         V_t = vn.predict_value(model_batch).cpu()  # ty: ignore[missing-argument, invalid-argument-type]
 
         for i in range(B):
