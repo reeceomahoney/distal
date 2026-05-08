@@ -1401,6 +1401,7 @@ class PiStar06Policy(PreTrainedPolicy):
         self._setup_advantage_tokens()
 
         self._train_step_count = 0
+        self.recap_log_every = 100
         self.reset()
 
     # ── from_pretrained ──────────────────────────────────────────────────
@@ -1868,7 +1869,8 @@ class PiStar06Policy(PreTrainedPolicy):
 
         if self.training:
             self._train_step_count += 1
-            if self._train_step_count % 10 == 1:
+            n = max(self.recap_log_every, 1)
+            if self._train_step_count == 1 or self._train_step_count % n == 0:
                 parts = [f"[RECAP step {self._train_step_count}]"]
                 if "V_t_mean" in adv_diagnostics:
                     parts.append(
