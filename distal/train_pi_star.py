@@ -114,7 +114,7 @@ class RECAPPiStarTrainingConfig:
     device: str = "cuda"
     log_every_n_steps: int = 100
     max_val_steps: int | None = 50
-    sim_eval_every_n_train_steps: int = 1000
+    sim_eval_every_n_train_steps: int = 500
 
     policy: PiStar06Config = field(
         default_factory=lambda: PiStar06Config(
@@ -270,6 +270,7 @@ def _precompute_advantages(
     policy_cfg,
     device: torch.device,
     batch_size: int = 4,
+    num_workers: int = 0,
 ) -> tuple[dict[int, float], dict[int, int]]:
     """Pre-compute per-frame advantages using the frozen value network.
 
@@ -300,15 +301,20 @@ def _precompute_advantages(
         full_dataset,
         batch_size=batch_size,
         shuffle=False,
-        num_workers=0,
+        num_workers=num_workers,
+        pin_memory=(device.type == "cuda"),
         drop_last=False,
+        prefetch_factor=2 if num_workers > 0 else None,
     )
 
     advantage_lookup: dict[int, float] = {}
     episode_lookup: dict[int, int] = {}
     total_frames = 0
+    n_total = len(full_dataset)
+    log_every_n_batches = 10
+    start_time = time_module.perf_counter()
 
-    for batch in loader:
+    for batch_idx, batch in enumerate(loader):
         abs_indices = batch["index"]
         ep_indices = batch["episode_index"]
         B = abs_indices.shape[0]
@@ -329,10 +335,15 @@ def _precompute_advantages(
                 episode_lookup[abs_idx] = int(ep_indices[i].item())
 
         total_frames += B
-        if total_frames % 500 == 0:
+        if (batch_idx + 1) % log_every_n_batches == 0 or total_frames >= n_total:
+            elapsed = time_module.perf_counter() - start_time
+            frames_per_sec = total_frames / max(elapsed, 1e-9)
+            eta = max(n_total - total_frames, 0) / max(frames_per_sec, 1e-9)
             logging.info(
-                f"  Pre-computed advantages for {total_frames}/"
-                f"{len(full_dataset)} frames"
+                f"  Pre-computed advantages for {total_frames}/{n_total} frames "
+                f"({frames_per_sec:.1f} frames/s, "
+                f"elapsed={format_duration(elapsed)}, "
+                f"eta={format_duration(eta)})"
             )
 
     logging.info(
@@ -749,6 +760,7 @@ def run_recap_pistar_train_val(cfg: RECAPPiStarTrainingConfig) -> None:
                 policy_cfg=policy_cfg,
                 device=device,
                 batch_size=cfg.advantage.vn_batch_size,
+                num_workers=cfg.num_workers,
             )
             if cfg.advantage.cache:
                 advantage_cache.save(
