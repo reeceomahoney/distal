@@ -58,6 +58,10 @@ diagnostic.
   `PYOPENGL_PLATFORM=egl`). OSMesa is too slow for policy evaluation.
 - `slurm-tools` is a separate git repo (pulled as a git dependency); push
   changes to it from its own checkout.
+- **Cluster jobs go through `uv run slurm run`.** Override configs on the CLI
+  rather than editing `configs/slurm.yaml`. Check job status at
+  `localhost:5000/jobs` and view logs at `localhost:5000/logs/<job_id>` (both
+  served by `uv run slurm gui`).
 - **SkyPilot API server caches code.** After patching SkyPilot source under
   `.venv/`, run `uv run sky api stop` before retrying — the daemon keeps stale
   modules loaded.
