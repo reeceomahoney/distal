@@ -64,7 +64,9 @@ def replay_variant_names(
     skipped here.
     """
     classif = json.loads(
-        (files("libero.libero") / "benchmark" / "task_classification.json").read_text()
+        (
+            files("libero_plus.libero_plus") / "benchmark" / "task_classification.json"
+        ).read_text()
     )
     names: list[str] = []
     for suite_name in suites:

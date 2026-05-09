@@ -167,5 +167,12 @@ YAML configs drive workflows via draccus / LeRobot config parsers:
 ### LeRobot fork
 
 `pyproject.toml` pins `lerobot` to a custom fork:
-`reeceomahoney/lerobot @ distal-libero-plus`. A `distal` branch is also
-available (commented out). Switching branches requires a `uv lock` + `uv sync`.
+`reeceomahoney/lerobot @ distal`. The fork exposes two simulation extras
+side-by-side: `libero` (base suites via `hf-libero`, providing the `libero`
+Python module) and `libero-plus` (perturbation suites via
+`reeceomahoney/LIBERO-plus@distal-deps`, renamed to the `libero_plus` Python
+module so both packages coexist). `lerobot/envs/libero.py::_libero_backend`
+dispatches between them based on the `is_libero_plus` flag at the call site. The
+two packages each read their own `~/.libero/config.yaml` /
+`~/.libero_plus/config.yaml`, so concurrent slurm jobs (one base, one
+libero-plus) no longer clobber each other.

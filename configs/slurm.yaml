@@ -23,6 +23,7 @@ command: |-
   module load cuda/12.6
   uv sync
   pixi install
+  bash scripts/setup_libero.sh
 
   # run command
-  uv run distal/train_value.py
+  uv run distal/train_pi_star.py

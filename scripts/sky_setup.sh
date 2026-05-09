@@ -20,26 +20,7 @@ cd ~/sky_workdir
 
 uv sync
 
-LIBERO_DIR="$HOME/sky_workdir/.venv/lib/python3.12/site-packages/libero/libero"
-if [ ! -d "$LIBERO_DIR/assets" ]; then
-  TMP_EXTRACT=$(mktemp -d -p "$LIBERO_DIR")
-  ZIP_PATH="$TMP_EXTRACT/libero_assets.zip"
-  curl -L -o "$ZIP_PATH" \
-    "https://huggingface.co/datasets/Sylvest/LIBERO-plus/resolve/main/assets.zip"
-  unzip -q "$ZIP_PATH" -d "$TMP_EXTRACT"
-  ASSETS_SRC=$(find "$TMP_EXTRACT" -type d -name assets -print -quit)
-  mv "$ASSETS_SRC" "$LIBERO_DIR/assets"
-  rm -rf "$TMP_EXTRACT"
-fi
-
-mkdir -p ~/.libero
-cat <<EOF > ~/.libero/config.yaml
-assets: $HOME/sky_workdir/.venv/lib/python3.12/site-packages/libero/libero/./assets
-bddl_files: $HOME/sky_workdir/.venv/lib/python3.12/site-packages/libero/libero/./bddl_files
-benchmark_root: $HOME/sky_workdir/.venv/lib/python3.12/site-packages/libero/libero
-datasets: $HOME/sky_workdir/.venv/lib/python3.12/site-packages/libero/libero/../datasets
-init_states: $HOME/sky_workdir/.venv/lib/python3.12/site-packages/libero/libero/./init_files
-EOF
+bash ~/sky_workdir/scripts/setup_libero.sh
 
 cd ~/sky_workdir
 uv run python ~/sky_workdir/.venv/lib/python3.12/site-packages/robosuite/scripts/setup_macros.py

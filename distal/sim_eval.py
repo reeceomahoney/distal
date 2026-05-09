@@ -75,7 +75,9 @@ class LiberoPlusEvalConfig:
 
 def build_task_id_to_base_task(suites: list[str]) -> dict[int, str]:
     classif = json.loads(
-        (files("libero.libero") / "benchmark" / "task_classification.json").read_text()
+        (
+            files("libero_plus.libero_plus") / "benchmark" / "task_classification.json"
+        ).read_text()
     )
     return {
         entry["id"]: base_task_name(entry["name"])
@@ -96,7 +98,9 @@ def resolve_eval_task_ids(
     if base_task is not None:
         classif = json.loads(
             (
-                files("libero.libero") / "benchmark" / "task_classification.json"
+                files("libero_plus.libero_plus")
+                / "benchmark"
+                / "task_classification.json"
             ).read_text()
         )
         id_to_base = {e["id"]: base_task_name(e["name"]) for e in classif[suite_name]}

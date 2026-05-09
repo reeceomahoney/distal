@@ -114,7 +114,9 @@ def base_task_name(variant_name: str) -> str:
 def sample_task_ids(suite_name: str, per_cell: int = 1, seed: int = 0) -> list[int]:
     """Sample task IDs stratified by (base_task, category, difficulty_level)."""
     classif = json.loads(
-        (files("libero.libero") / "benchmark" / "task_classification.json").read_text()
+        (
+            files("libero_plus.libero_plus") / "benchmark" / "task_classification.json"
+        ).read_text()
     )
     by_cell: dict[tuple, list[int]] = {}
     for entry in classif[suite_name]:
