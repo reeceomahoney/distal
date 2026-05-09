@@ -1110,31 +1110,39 @@ def run_recap_pistar_train_val(cfg: RECAPPiStarTrainingConfig) -> None:
             }
         )
 
-        # ── Validate ─────────────────────────────────────────────────
-        try:
-            val_metrics = _run_validation(
-                policy,
-                val_loader,
-                preprocessor,
-                advantage_lookup,
-                success_by_episode,
-                device,
-                max_steps=cfg.max_val_steps,
-            )
-        except Exception as error:  # noqa: BLE001
-            if not is_known_video_validation_error(error):
-                policy.train()
-                raise
-            logging.warning(
-                f"[step {global_step}] Validation skipped due to persistent "
-                f"video decoding/timestamp errors: {error}"
-            )
-            val_metrics = dict(nan_val_metrics)
+        # ── Validate (on sim-eval cadence to amortise its ~25% wall-time cost) ──
+        is_val_step = cfg.sim_eval_every_n_train_steps > 0 and (
+            global_step % cfg.sim_eval_every_n_train_steps == 0
+            or global_step == cfg.train_steps
+        )
+        if is_val_step:
+            try:
+                val_metrics = _run_validation(
+                    policy,
+                    val_loader,
+                    preprocessor,
+                    advantage_lookup,
+                    success_by_episode,
+                    device,
+                    max_steps=cfg.max_val_steps,
+                )
+            except Exception as error:  # noqa: BLE001
+                if not is_known_video_validation_error(error):
+                    policy.train()
+                    raise
+                logging.warning(
+                    f"[step {global_step}] Validation skipped due to persistent "
+                    f"video decoding/timestamp errors: {error}"
+                )
+                val_metrics = dict(nan_val_metrics)
+            else:
+                _log_val_metrics(f"step {global_step}/{cfg.train_steps}", val_metrics)
+                wandb_step_metrics.update(
+                    {f"val/{k}": v for k, v in val_metrics.items()}
+                )
+            policy.train()
         else:
-            _log_val_metrics(f"step {global_step}/{cfg.train_steps}", val_metrics)
-            wandb_step_metrics.update({f"val/{k}": v for k, v in val_metrics.items()})
-
-        policy.train()
+            val_metrics = dict(nan_val_metrics)
 
         # ── History + checkpoint ─────────────────────────────────────
         saved_metrics = {
