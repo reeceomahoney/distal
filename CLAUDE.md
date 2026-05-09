@@ -54,8 +54,8 @@ diagnostic.
 - **Never start function or variable names with underscores.** Use plain names.
 - **Don't add `Usage:` sections to module docstrings** — entry points use
   `draccus`/`lerobot.configs.parser`, which are self-documenting.
-- **Never use OSMesa for MuJoCo rendering. Always EGL** (`MUJOCO_GL=egl`,
-  `PYOPENGL_PLATFORM=egl`). OSMesa is too slow for policy evaluation.
+- **Never use OSMesa for MuJoCo rendering. Always EGL** (`MUJOCO_GL=egl`).
+  OSMesa is too slow for policy evaluation.
 - `slurm-tools` is a separate git repo (pulled as a git dependency); push
   changes to it from its own checkout.
 - **Cluster jobs go through `uv run slurm run`.** Override configs on the CLI
