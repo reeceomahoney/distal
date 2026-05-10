@@ -637,7 +637,8 @@ def save_pistar_checkpoint(
     pretrained_dir = checkpoint_dir / "pretrained_model"
     pretrained_dir.mkdir(parents=True, exist_ok=True)
     policy.save_pretrained(pretrained_dir)
-    write_json(asdict(cfg), pretrained_dir / "train_config.json")
+    with open(pretrained_dir / "train_config.json", "w") as f:
+        json.dump(asdict(cfg), f, indent=4, default=str)
     if metrics is not None:
         write_json(metrics, pretrained_dir / "metrics.json")
     if preprocessor is not None:
