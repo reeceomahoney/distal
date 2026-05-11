@@ -21,8 +21,6 @@ envs:
   - LD_LIBRARY_PATH: $PWD/.pixi/envs/default/lib:$LD_LIBRARY_PATH
 command: |-
   module load cuda/12.6
-  pixi install
   bash scripts/setup_libero.sh
 
-  # run command
-  pixi run distal/plotting/plot_rewards.py
+  pixi run python distal/train_pi_star.py

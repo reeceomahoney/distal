@@ -41,14 +41,14 @@ ruff = ">=0.15.2"
 ty = ">=0.0.21"
 
 [target.linux-64.pypi-dependencies]
-torch = { version = "*", index = "https://download.pytorch.org/whl/cu126" }
-torchvision = { version = "*", index = "https://download.pytorch.org/whl/cu126" }
-torchcodec = { version = "*", index = "https://download.pytorch.org/whl/cu126" }
+torch = { version = ">=2.7,<2.11", index = "https://download.pytorch.org/whl/cu126" }
+torchvision = { version = ">=0.22,<0.26", index = "https://download.pytorch.org/whl/cu126" }
+torchcodec = { version = ">=0.3,<0.11", index = "https://download.pytorch.org/whl/cu126" }
 
 [target.linux-aarch64.pypi-dependencies]
-torch = { version = "*", index = "https://download.pytorch.org/whl/cu126" }
-torchvision = { version = "*", index = "https://download.pytorch.org/whl/cu126" }
-torchcodec = { version = "*", index = "https://download.pytorch.org/whl/cu126" }
+torch = { version = ">=2.7,<2.11", index = "https://download.pytorch.org/whl/cu126" }
+torchvision = { version = ">=0.22,<0.26", index = "https://download.pytorch.org/whl/cu126" }
+torchcodec = { version = ">=0.3,<0.11", index = "https://download.pytorch.org/whl/cu126" }
 
 [feature.hardware.target.linux-64.pypi-dependencies]
 lerobot = { git = "https://github.com/reeceomahoney/lerobot", branch = "distal", extras = [
