@@ -115,7 +115,7 @@ def main(cfg: AurocConfig) -> None:
 
     if not isinstance(cfg.reward, KnnRewardConfig):
         raise ValueError(
-            f"debug_maha_rewards expects --reward.type=knn, got {cfg.reward.type}"
+            f"plot_rewards expects --reward.type=knn, got {cfg.reward.type}"
         )
 
     device = get_safe_torch_device(cfg.device, log=True)

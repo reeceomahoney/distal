@@ -132,10 +132,10 @@ auto-set to a per-task percentile during training), `advantage_dropout` (CFG).
 - `eval_guidance.py` — Sweeps classifier-free guidance scales by shelling out to
   `lerobot-eval`.
 - `push_to_hub.py` — Upload checkpoints / value networks to HF Hub.
-- `plotting/` — Diagnostic scripts: `debug_maha_rewards.py`,
-  `plot_gt_returns.py`. `plot_gt_returns.py` mirrors the exact reward/return
-  construction in `train_value._build_frame_targets` so the plot reflects what
-  the model actually trains against.
+- `plotting/` — Diagnostic scripts: `plot_rewards.py`, `plot_returns.py`.
+  `plot_returns.py` mirrors the exact reward/return construction in
+  `train_value._build_frame_targets` so the plot reflects what the model
+  actually trains against.
 - `hardware/zero.py`, `hardware/can_activate.py` — Piper init / CAN bring-up.
 
 ### Hardware Plugins
