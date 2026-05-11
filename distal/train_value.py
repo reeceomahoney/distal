@@ -82,7 +82,7 @@ class ValidationFramePrediction:
 class RECAPValueTrainingConfig:
     """Configuration for RECAP value-network train/val."""
 
-    job_name: str = "value-knn-libero-plus"
+    job_name: str = "value-knn-rel-libero-plus"
     dataset_repo_id: str = "reece-omahoney/pi05-libero-plus"
     train_steps: int = 20_000
     batch_size: int = 64
@@ -108,7 +108,7 @@ class RECAPValueTrainingConfig:
     # Per-step reward source. See RewardConfig subclasses (steps / maha / knn).
     reward: RewardConfig = field(
         default_factory=lambda: KnnRewardConfig(
-            demo_dataset_repo_id="lerobot/libero_plus"
+            demo_dataset_repo_id="lerobot/libero_plus", relative_mode=True
         )
     )
 

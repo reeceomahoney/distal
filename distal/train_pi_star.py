@@ -87,7 +87,7 @@ class AdvantageConfig:
     runtime and are not user-facing knobs.
     """
 
-    value_network_pretrained_path: str = "reece-omahoney/value-knn-libero-plus"
+    value_network_pretrained_path: str = "reece-omahoney/value-knn-rel-libero-plus"
 
     # When set, override ``policy.advantage_threshold`` with the Nth percentile
     # of the precomputed advantage distribution (~30% positive at p=70).
@@ -106,12 +106,12 @@ class AdvantageConfig:
 class RECAPPiStarTrainingConfig:
     """Configuration for RECAP PiStar06 advantage-conditioned Pi0.5 policy training."""
 
-    job_name: str = "pistar-knn-libero-plus"
+    job_name: str = "pistar-knn-rel-libero-plus"
     dataset_repo_id: str = "reece-omahoney/pi05-libero-plus"
 
     train_steps: int = 20_000
     batch_size: int = 64
-    num_workers: int = 8
+    num_workers: int = 4
     val_split_ratio: float = 0.1
     seed: int = 42
     device: str = "cuda"
@@ -132,11 +132,14 @@ class RECAPPiStarTrainingConfig:
 
     # Sim eval
     eval_cfg: LiberoEvalConfig | LiberoPlusEvalConfig = field(
-        default_factory=lambda: LiberoEvalConfig(
-            suites=["libero_10"],
-            task_ids=[8],
-            n_envs_per_task=25,
-            n_episodes_per_task=2,
+        # default_factory=lambda: LiberoEvalConfig(
+        #     suites=["libero_10"],
+        #     task_ids=[8],
+        #     n_envs_per_task=25,
+        #     n_episodes_per_task=2,
+        # )
+        default_factory=lambda: LiberoPlusEvalConfig(
+            base_task="turn_on_the_stove", parallel_envs=25
         )
     )
 
