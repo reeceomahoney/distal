@@ -15,12 +15,17 @@ envs:
   MUJOCO_GL: egl
   PYOPENGL_PLATFORM: egl
   SLURM_JOB_ID: 0  # suppress tqdm
-  # SUITE: libero_spatial
-  # DATASET_REPO_ID: reece-omahoney/pi05-libero-plus
 workdir: .
 
 setup: |
-  bash ~/sky_workdir/scripts/sky_setup.sh
+  curl -fsSL https://pixi.sh/install.sh | bash
+  export PATH="$HOME/.pixi/bin:$PATH"
+
+  cd ~/sky_workdir
+  pixi install
+
+  bash ~/sky_workdir/scripts/setup_libero.sh
+  pixi run python ~/sky_workdir/.pixi/envs/default/lib/python3.12/site-packages/robosuite/scripts/setup_macros.py
 
 run: |
   cd ~/sky_workdir

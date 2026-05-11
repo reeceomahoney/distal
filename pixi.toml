@@ -113,17 +113,6 @@ else
 fi
 """
 
-[tasks.sky-ssh]
-description = "Same as sky but via SSH cloud config"
-args = [{ "arg" = "cluster_id", "default" = "" }]
-cmd = """
-if [ -n "{{ cluster_id }}" ]; then
-  sky exec {{ cluster_id }} configs/sky-ssh.yaml --env HF_TOKEN --env WANDB_API_KEY
-else
-  sky launch configs/sky-ssh.yaml -y --env HF_TOKEN --env WANDB_API_KEY
-fi
-"""
-
 [tasks.sweep]
 description = "Create wandb sweep and submit N SLURM agents (default 5)"
 args = [{ "arg" = "n_agents", "default" = "5" }]
