@@ -19,6 +19,7 @@ envs:
   - TRITON_CACHE_DIR: $HOME/.cache/triton
   - PATH: $HOME/.local/bin:$HOME/.pixi/bin:$PWD/.pixi/envs/default/bin:$PATH
   - LD_LIBRARY_PATH: $PWD/.pixi/envs/default/lib:$LD_LIBRARY_PATH
+  - PYTORCH_CUDA_ALLOC_CONF: expandable_segments:True
 command: |-
   module load cuda/12.6
   bash scripts/setup_libero.sh
