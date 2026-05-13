@@ -17,6 +17,8 @@ version = "0.1.0"
 python = ">=3.12,<3.13"
 ffmpeg = ">=8.1.1,<9"
 imagemagick = ">=7.1.2_21,<8"
+cmake = ">=4.3.2,<5"
+unzip = ">=6.0,<7"
 
 [pypi-dependencies]
 distal = { path = ".", editable = true }
@@ -109,11 +111,11 @@ cmd = "lerobot-rollout --config_path=configs/rollout.yaml"
 description = "Launch on Vast via SkyPilot, or sky exec on existing cluster_id"
 args = [{ "arg" = "cluster_id", "default" = "" }]
 cmd = """
-if [ -n "{{ cluster_id }}" ]; then
-  sky exec {{ cluster_id }} configs/sky.yaml --env HF_TOKEN --env WANDB_API_KEY
-else
-  sky launch configs/sky.yaml -y --env HF_TOKEN --env WANDB_API_KEY
-fi
+{%- if cluster_id -%}
+sky exec {{ cluster_id }} configs/sky.yaml --env HF_TOKEN --env WANDB_API_KEY
+{%- else -%}
+sky launch configs/sky.yaml -y --env HF_TOKEN --env WANDB_API_KEY
+{%- endif -%}
 """
 
 [tasks.collect-libero-plus]

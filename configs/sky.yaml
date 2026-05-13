@@ -4,7 +4,7 @@ resources:
   cloud: vast
   accelerators: RTX5090
   image_id: docker:nvidia/cuda:12.8.0-cudnn-devel-ubuntu22.04
-  disk_size: 128
+  disk_size: 64
   autostop:
     idle_minutes: 10
     down: true
@@ -15,6 +15,7 @@ envs:
   MUJOCO_GL: egl
   PYOPENGL_PLATFORM: egl
   SLURM_JOB_ID: 0  # suppress tqdm
+  CMAKE_POLICY_VERSION_MINIMUM: 3.5
 workdir: .
 
 setup: |
@@ -22,6 +23,7 @@ setup: |
   export PATH="$HOME/.pixi/bin:$PATH"
 
   cd ~/sky_workdir
+  pixi config set --local run-post-link-scripts insecure
   pixi install
 
   bash ~/sky_workdir/scripts/setup_libero.sh
@@ -29,4 +31,4 @@ setup: |
 
 run: |
   cd ~/sky_workdir
-  pixi run python distal/train_pi_star.py
+  pixi run eval
