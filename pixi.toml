@@ -45,19 +45,28 @@ lerobot-doctor = ">=0.1.0, <0.2"
 torch = { version = ">=2.7,<2.11", index = "https://download.pytorch.org/whl/cu126" }
 torchvision = { version = ">=0.22,<0.26", index = "https://download.pytorch.org/whl/cu126" }
 torchcodec = { version = ">=0.3,<0.11", index = "https://download.pytorch.org/whl/cu126" }
+nvidia-npp-cu12 = ">=12,<13"
 
 [target.linux-aarch64.pypi-dependencies]
 torch = { version = ">=2.7,<2.11", index = "https://download.pytorch.org/whl/cu126" }
 torchvision = { version = ">=0.22,<0.26", index = "https://download.pytorch.org/whl/cu126" }
 torchcodec = { version = ">=0.3,<0.11", index = "https://download.pytorch.org/whl/cu126" }
+nvidia-npp-cu12 = ">=12,<13"
 
 [feature.hardware.target.linux-64.pypi-dependencies]
 lerobot = { git = "https://github.com/reeceomahoney/lerobot", branch = "distal", extras = [
   "intelrealsense",
+  "deepdiff-dep",
 ] }
 lerobot_robot_piper = { path = "lerobot_robot_piper", editable = true }
 lerobot_teleoperator_piper = { path = "lerobot_teleoperator_piper", editable = true }
 pynput = ">=1.7"
+
+[target.linux-64.activation.env]
+LD_LIBRARY_PATH = "$CONDA_PREFIX/lib/python3.12/site-packages/nvidia/npp/lib:$LD_LIBRARY_PATH"
+
+[target.linux-aarch64.activation.env]
+LD_LIBRARY_PATH = "$CONDA_PREFIX/lib/python3.12/site-packages/nvidia/npp/lib:$LD_LIBRARY_PATH"
 
 [environments]
 default = { solve-group = "default" }
