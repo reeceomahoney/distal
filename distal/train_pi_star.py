@@ -56,6 +56,7 @@ from lerobot_policy_pistar06.modeling_pistar06 import PiStar06Policy
 from torch.utils.data import DataLoader
 
 from distal import advantage_cache
+from distal.collect_libero_plus import base_task_name
 from distal.rewards.configs import MahaRewardConfig, RewardConfig
 from distal.sim_eval import (
     LiberoEvalConfig,
@@ -65,6 +66,7 @@ from distal.sim_eval import (
 )
 from distal.train_value import (
     FrameTarget,
+    build_episode_infos,
     build_frame_targets,
     format_duration,
     is_known_video_validation_error,
@@ -72,6 +74,7 @@ from distal.train_value import (
     split_train_val_targets,
 )
 from distal.value_model import RECAPValueConfig, RECAPValueNetwork
+from distal.variant_names import try_load_variant_names
 
 
 @dataclass
@@ -92,6 +95,14 @@ class AdvantageConfig:
     # When set, override ``policy.advantage_threshold`` with the Nth percentile
     # of the precomputed advantage distribution (~30% positive at p=70).
     threshold_percentile: float | None = 70.0
+
+    # When True, compute the percentile threshold per base task and shift each
+    # frame's advantage by its task threshold. For LIBERO-plus datasets,
+    # ``meta/variant_names.json`` (written by collect_libero_plus.py, or
+    # backfilled by distal/backfill_variant_names.py) is used to collapse
+    # variants to base tasks; otherwise grouping falls back to the dataset's
+    # raw task string.
+    per_task_threshold: bool = True
 
     # Value network advantage precomputation batch size
     vn_batch_size: int = 640
@@ -392,6 +403,104 @@ def _compute_advantage_threshold(
         f"({pct_positive:.1f}% of frames will be positive)"
     )
     return threshold
+
+
+def _build_abs_to_task(dataset: LeRobotDataset) -> dict[int, str]:
+    """Map every absolute frame index to a stable per-task label.
+
+    For LIBERO-plus datasets (those with a ``meta/variant_names.json``
+    sidecar) we collapse variants to base tasks via ``base_task_name``,
+    because the dataset's stored ``task`` string is the rewritten natural
+    language for language perturbations and so doesn't identify the
+    underlying task. For base LIBERO the dataset's ``task`` string already
+    names the base task and is used directly.
+    """
+    ep_to_variant = try_load_variant_names(dataset)
+    ep_to_task: dict[int, str] | None = None
+    if ep_to_variant is not None:
+        ep_to_task = {ep: base_task_name(v) for ep, v in ep_to_variant.items()}
+        logging.info(
+            f"Loaded variant_names sidecar ({len(ep_to_variant)} episodes); "
+            f"grouping by base_task_name → {len({*ep_to_task.values()})} tasks"
+        )
+    else:
+        logging.info(
+            "No variant_names sidecar found — grouping by the dataset's raw task string"
+        )
+
+    episode_infos = build_episode_infos(dataset)
+    abs_to_task: dict[int, str] = {}
+    for info in episode_infos.values():
+        task = ep_to_task[info.episode_index] if ep_to_task is not None else info.task
+        for abs_idx in range(info.start_index, info.end_index):
+            abs_to_task[abs_idx] = task
+    return abs_to_task
+
+
+def _compute_per_task_thresholds(
+    advantage_lookup: dict[int, float],
+    abs_to_task: dict[int, str],
+    percentile: float,
+) -> dict[str, float]:
+    """Compute the Nth percentile of advantages within each task group."""
+    by_task: dict[str, list[float]] = {}
+    for abs_idx, adv in advantage_lookup.items():
+        task = abs_to_task.get(abs_idx)
+        if task is None:
+            continue
+        by_task.setdefault(task, []).append(adv)
+
+    thresholds = {
+        task: float(np.percentile(np.asarray(vals, dtype=np.float64), percentile))
+        for task, vals in by_task.items()
+    }
+
+    all_values = np.asarray(list(advantage_lookup.values()), dtype=np.float64)
+    global_th = float(np.percentile(all_values, percentile))
+    th_values = np.asarray(list(thresholds.values()), dtype=np.float64)
+    logging.info(
+        f"Per-task thresholds @ p{percentile:.0f} across {len(thresholds)} tasks: "
+        f"global_th={global_th:+.5f}  "
+        f"per_task range [{th_values.min():+.5f}, {th_values.max():+.5f}]  "
+        f"mean_diff={(th_values - global_th).mean():+.5f}  "
+        f"std_diff={(th_values - global_th).std():.5f}"
+    )
+    for task in sorted(thresholds):
+        n = len(by_task[task])
+        diff = thresholds[task] - global_th
+        logging.info(
+            f"  {task}: n={n} th={thresholds[task]:+.5f} diff_vs_global={diff:+.5f}"
+        )
+    return thresholds
+
+
+def _shift_advantages_by_task(
+    advantage_lookup: dict[int, float],
+    abs_to_task: dict[int, str],
+    task_thresholds: dict[str, float],
+) -> dict[int, float]:
+    """Subtract each frame's task threshold from its advantage.
+
+    After this shift, ``adv > 0`` equals ``raw_adv > task_threshold`` per
+    frame, so the policy's existing ``advantage > advantage_threshold`` check
+    works with ``advantage_threshold=0``. Frames whose task is missing from
+    the thresholds dict are left unshifted (defensive fallback).
+    """
+    shifted: dict[int, float] = {}
+    missing = 0
+    for abs_idx, adv in advantage_lookup.items():
+        task = abs_to_task.get(abs_idx)
+        if task is None or task not in task_thresholds:
+            missing += 1
+            shifted[abs_idx] = adv
+            continue
+        shifted[abs_idx] = adv - task_thresholds[task]
+    if missing:
+        logging.warning(
+            f"_shift_advantages_by_task: {missing} frames had no task threshold "
+            "and were left unshifted"
+        )
+    return shifted
 
 
 def _inject_advantages(
@@ -839,9 +948,26 @@ def run_recap_pistar_train_val(cfg: RECAPPiStarTrainingConfig) -> None:
 
         # ── 3b. Auto-compute advantage threshold from percentile ─────────
         if cfg.advantage.threshold_percentile is not None:
-            cfg.policy.advantage_threshold = _compute_advantage_threshold(
-                advantage_lookup, cfg.advantage.threshold_percentile
-            )
+            if cfg.advantage.per_task_threshold:
+                # Per-task: shift each advantage by its task threshold and pin
+                # the policy threshold to 0. All downstream code (training,
+                # validation, policy.forward) keeps comparing against a scalar
+                # threshold; the per-task structure lives entirely in the
+                # pre-shifted advantage values.
+                abs_to_task = _build_abs_to_task(full_dataset)
+                task_thresholds = _compute_per_task_thresholds(
+                    advantage_lookup,
+                    abs_to_task,
+                    cfg.advantage.threshold_percentile,
+                )
+                advantage_lookup = _shift_advantages_by_task(
+                    advantage_lookup, abs_to_task, task_thresholds
+                )
+                cfg.policy.advantage_threshold = 0.0
+            else:
+                cfg.policy.advantage_threshold = _compute_advantage_threshold(
+                    advantage_lookup, cfg.advantage.threshold_percentile
+                )
         else:
             logging.info(
                 f"Using fixed advantage_threshold={cfg.policy.advantage_threshold:.5f} "

@@ -36,6 +36,8 @@ from lerobot.utils.import_utils import register_third_party_plugins
 from lerobot.utils.random_utils import set_seed
 from lerobot.utils.utils import init_logging
 
+from distal.variant_names import VARIANT_NAMES_REPO_PATH, save_variant_names
+
 multiprocessing.set_start_method("spawn", force=True)
 
 
@@ -171,16 +173,24 @@ def make_vec_env(
 
 
 def write_episodes_to_dataset(
-    info: dict, dataset: LeRobotDataset, task_descs: list[str]
-) -> None:
+    info: dict,
+    dataset: LeRobotDataset,
+    task_descs: list[str],
+    variant_names: list[str],
+) -> dict[int, str]:
     """Write episode data returned by lerobot's eval_policy into a LeRobot dataset.
 
-    `task_descs[i]` is the language instruction for env-index `i`. With
-    `n_episodes == n_envs` there's one episode per env, so `episode_ix == env_ix`.
+    ``task_descs[i]`` and ``variant_names[i]`` are the language instruction
+    and the LIBERO-plus variant name (e.g. ``KITCHEN_SCENE3_..._table_1``)
+    for env-index ``i``. With ``n_episodes == n_envs`` there's one episode
+    per env, so ``episode_ix == env_ix``. Returns the
+    ``episode_index -> variant_name`` mapping for the episodes just written;
+    the caller stitches per-chunk maps into a dataset-wide sidecar.
     """
     episodes = info["episodes"]
     obs_keys = [k for k in episodes if k.startswith("observation.")]
     features = dataset.meta.features
+    new_entries: dict[int, str] = {}
 
     for ep_info in info["per_episode"]:
         ep_ix = ep_info["episode_ix"]
@@ -201,7 +211,10 @@ def write_episodes_to_dataset(
             frame["task"] = task_descs[ep_ix]
             frame["success"] = np.array([ep_info["success"]], dtype=bool)
             dataset.add_frame(frame)
+        new_ep_index = dataset.num_episodes
         dataset.save_episode()
+        new_entries[new_ep_index] = variant_names[ep_ix]
+    return new_entries
 
 
 @draccus.wrap()
@@ -273,14 +286,22 @@ def main(cfg: EvalDistConfig):
             ids = ids[: cfg.max_tasks]
         suite_to_ids[suite] = ids
 
+    classif = json.loads(
+        (
+            files("libero_plus.libero_plus") / "benchmark" / "task_classification.json"
+        ).read_text()
+    )
+
     n_tasks = sum(len(v) for v in suite_to_ids.values())
     n_done = 0
     all_successes: list[bool] = []
+    ep_to_variant: dict[int, str] = {}
     t_start = time.monotonic()
 
     try:
         with torch.no_grad():
             for suite_name, ids in suite_to_ids.items():
+                suite_entries = classif[suite_name]
                 for chunk_start in range(0, len(ids), parallel_envs):
                     chunk = ids[chunk_start : chunk_start + parallel_envs]
 
@@ -293,6 +314,7 @@ def main(cfg: EvalDistConfig):
                     )
                     vec_env = make_vec_env(chunk_cfg, chunk)
                     task_descs = list(vec_env.call("task_description"))
+                    chunk_variants = [suite_entries[tid]["name"] for tid in chunk]
                     n_done += len(chunk)
                     print(
                         f"\n[{n_done}/{n_tasks}] suite={suite_name} "
@@ -325,15 +347,32 @@ def main(cfg: EvalDistConfig):
                         f"Elapsed: {elapsed / 60:.1f}min | ETA: {eta / 60:.1f}min"
                     )
 
-                    write_episodes_to_dataset(info, dataset, task_descs)
+                    chunk_map = write_episodes_to_dataset(
+                        info, dataset, task_descs, chunk_variants
+                    )
+                    ep_to_variant.update(chunk_map)
                     vec_env.close()
     finally:
         dataset.finalize()
+        if ep_to_variant:
+            sidecar = save_variant_names(dataset.root, ep_to_variant)
+            print(
+                f"Wrote variant_names sidecar ({len(ep_to_variant)} eps) -> {sidecar}"
+            )
         print(
             f"Dataset saved to {dataset.root}"
             f" ({dataset.num_episodes} episodes, {dataset.num_frames} frames)"
         )
         dataset.push_to_hub()
+        if ep_to_variant:
+            from huggingface_hub import HfApi
+
+            HfApi().upload_file(
+                path_or_fileobj=str(sidecar),
+                path_in_repo=VARIANT_NAMES_REPO_PATH,
+                repo_id=cfg.dataset_repo_id,
+                repo_type="dataset",
+            )
 
     elapsed = time.monotonic() - t_start
     total_successes = sum(all_successes)
