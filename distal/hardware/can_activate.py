@@ -11,40 +11,43 @@ Example:
 from __future__ import annotations
 
 import argparse
+import json
+import os
 import subprocess
 import sys
 from pathlib import Path
 from typing import Any
 
-from pyroute2.iproute.linux import IPRoute
 
-IFF_UP = 0x1
+def ip_link(*args: str) -> None:
+    subprocess.run(["ip", "link", *args], check=True)
 
 
-def get_can_interfaces(ipr: IPRoute) -> list[dict[str, Any]]:
+def get_can_interfaces() -> list[dict[str, Any]]:
     """Return all CAN-type network interfaces."""
+    result = subprocess.run(
+        ["ip", "-details", "-json", "link", "show", "type", "can"],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    links = json.loads(result.stdout)
+
     interfaces = []
-    for link in ipr.get_links():
-        linkinfo = link.get_attr("IFLA_LINKINFO")
-        if not linkinfo or linkinfo.get_attr("IFLA_INFO_KIND") != "can":
-            continue
+    for link in links:
+        name = link["ifname"]
+        bittiming = (
+            link.get("linkinfo", {}).get("info_data", {}).get("bittiming", {}) or {}
+        )
+        bitrate = bittiming.get("bitrate", 0)
 
-        bitrate = 0
-        info_data = linkinfo.get_attr("IFLA_INFO_DATA")
-        if info_data:
-            bittiming = info_data.get_attr("IFLA_CAN_BITTIMING")
-            if bittiming:
-                bitrate = bittiming.get("bitrate", 0)
-
-        name = link.get_attr("IFLA_IFNAME")
         device_path = Path(f"/sys/class/net/{name}/device")
         bus_info = device_path.resolve().name if device_path.is_symlink() else None
 
         interfaces.append(
             {
-                "index": link["index"],
                 "name": name,
-                "is_up": bool(link["flags"] & IFF_UP),
+                "is_up": "UP" in link.get("flags", []),
                 "bitrate": bitrate,
                 "bus_info": bus_info,
             }
@@ -52,30 +55,28 @@ def get_can_interfaces(ipr: IPRoute) -> list[dict[str, Any]]:
     return interfaces
 
 
-def configure(
-    ipr: IPRoute, iface: dict[str, Any], target_name: str, bitrate: int
-) -> None:
+def configure(iface: dict[str, Any], target_name: str, bitrate: int) -> None:
     """Set bitrate, rename, and bring up a CAN interface."""
-    idx = iface["index"]
     name = iface["name"]
 
     needs_reconfig = not iface["is_up"] or iface["bitrate"] != bitrate
     if needs_reconfig:
-        ipr.link("set", index=idx, state="down")
-        ipr.link("set", index=idx, kind="can", can_bitrate=bitrate)
-        ipr.link("set", index=idx, state="up")
-        idx = ipr.link_lookup(ifname=name)[0]
+        ip_link("set", name, "down")
+        ip_link("set", name, "type", "can", "bitrate", str(bitrate))
+        ip_link("set", name, "up")
 
     if name != target_name:
-        ipr.link("set", index=idx, state="down")
-        ipr.link("set", index=idx, ifname=target_name)
-        idx = ipr.link_lookup(ifname=target_name)[0]
-        ipr.link("set", index=idx, state="up")
+        ip_link("set", name, "down")
+        ip_link("set", name, "name", target_name)
+        ip_link("set", target_name, "up")
 
     print(f"  {name} ({iface['bus_info']}) -> {target_name} @ {bitrate}")
 
 
 def main() -> None:
+    if os.geteuid() != 0:
+        os.execvp("sudo", ["sudo", sys.executable, *sys.argv])
+
     parser = argparse.ArgumentParser(description="Activate CAN interfaces.")
     parser.add_argument(
         "-p",
@@ -90,25 +91,24 @@ def main() -> None:
 
     subprocess.run(["modprobe", "gs_usb"], capture_output=True, check=False)
 
-    with IPRoute() as ipr:
-        interfaces = get_can_interfaces(ipr)
-        if not interfaces:
-            sys.exit("Error: no CAN interfaces detected")
+    interfaces = get_can_interfaces()
+    if not interfaces:
+        sys.exit("Error: no CAN interfaces detected")
 
-        if args.ports:
-            by_bus = {i["bus_info"]: i for i in interfaces}
-            for entry in args.ports:
-                parts = entry.split("=")
-                if len(parts) != 3:
-                    sys.exit(f"Error: invalid mapping '{entry}', use USB=NAME=BITRATE")
-                usb_addr, name, bitrate = parts[0], parts[1], int(parts[2])
-                if usb_addr not in by_bus:
-                    print(f"  Warning: no interface at USB port '{usb_addr}', skipping")
-                    continue
-                configure(ipr, by_bus[usb_addr], name, bitrate)
-        else:
-            for iface in interfaces:
-                configure(ipr, iface, iface["name"], args.bitrate)
+    if args.ports:
+        by_bus = {i["bus_info"]: i for i in interfaces}
+        for entry in args.ports:
+            parts = entry.split("=")
+            if len(parts) != 3:
+                sys.exit(f"Error: invalid mapping '{entry}', use USB=NAME=BITRATE")
+            usb_addr, name, bitrate = parts[0], parts[1], int(parts[2])
+            if usb_addr not in by_bus:
+                print(f"  Warning: no interface at USB port '{usb_addr}', skipping")
+                continue
+            configure(by_bus[usb_addr], name, bitrate)
+    else:
+        for iface in interfaces:
+            configure(iface, iface["name"], args.bitrate)
 
 
 if __name__ == "__main__":
