@@ -1,17 +1,31 @@
 strategy:
-  type: base
+  type: episodic
+  max_episode_steps: 400
+  end_key: e
+  discard_key: d
+  next_key: n
 
 inference:
-  type: sync
+  type: rtc
 
 robot:
   type: piper
   teleop_mode: false
 
 policy:
-  path: reece-omahoney/pi05-remove-pen-lid
+  path: reece-omahoney/pi05-remove-pen-lid-2
   n_action_steps: 20
+
+dataset:
+  repo_id: reece-omahoney/rollout_remove-pen-lid-2
+  single_task: Remove the pen lid
+  fps: 20
+  streaming_encoding: true
+  encoder_threads: 5
+  vcodec: auto
+  push_to_hub: false
 
 fps: 20
 task: Remove the pen lid
-use_torch_compile: true
+use_torch_compile: false
+display_data: false
