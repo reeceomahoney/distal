@@ -15,8 +15,7 @@ import draccus
 
 @dataclass
 class EvalGuidanceConfig:
-    policy_path: str = "reece-omahoney/pistar06-libero-maha"
-    n_action_steps: int = 10
+    policy_path: str = "reece-omahoney/pistar-knn-libero"
     guidance_scales: list[float] = field(default_factory=lambda: [1.0, 1.5, 2.0, 2.5])
     libero_plus: bool = False
 
@@ -36,7 +35,6 @@ def main(cfg: EvalGuidanceConfig):
                 "-m",
                 "distal.eval_libero_plus",
                 f"--policy_path={cfg.policy_path}",
-                f"--n_action_steps={cfg.n_action_steps}",
                 f"--cfg_beta={beta}",
             ]
             eval_root = Path("outputs/eval_libero_plus")
@@ -48,9 +46,7 @@ def main(cfg: EvalGuidanceConfig):
                 "lerobot.scripts.lerobot_eval",
                 "--config_path=configs/eval.yaml",
                 f"--policy.path={cfg.policy_path}",
-                f"--policy.n_action_steps={cfg.n_action_steps}",
                 f"--policy.cfg_beta={beta}",
-                "--policy.device=cuda",
             ]
             eval_root = Path("outputs/eval")
             summary_glob = "eval_info.json"
