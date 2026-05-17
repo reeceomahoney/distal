@@ -1,1 +1,4 @@
 run-post-link-scripts = "insecure"
+
+[cache]
+netfs-redirect = "never"

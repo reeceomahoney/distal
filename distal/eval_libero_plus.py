@@ -15,7 +15,7 @@ from pathlib import Path
 
 # isort: off
 # Need this to prevent lib errors
-import wand.api  # noqa: F401
+import wand.api  # noqa: F401  # ty: ignore[unresolved-import]
 # isort: on
 
 import draccus

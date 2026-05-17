@@ -162,7 +162,10 @@ class KnnRewardConfig(RewardConfig):
         }
     )
     relative_mode: bool = False  # Use distance relative to initial frame
-    demo_embs_cache_dir: str = str(Path(HF_ASSETS_CACHE) / "distal" / "demo_embs")
+
+    @property
+    def demo_embs_cache_dir(self) -> str:
+        return str(Path(HF_ASSETS_CACHE) / "distal" / "demo_embs")
 
     def compute_distances(
         self,

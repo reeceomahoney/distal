@@ -140,6 +140,7 @@ def load_vn_metadata(vn_pretrained_path: str) -> ValueNetworkMetadata:
     reward: RewardConfig | None = None
     reward_dict = train_cfg.get("reward")
     if reward_dict:
+        reward_dict.pop("demo_embs_cache_dir", None)
         reward = draccus.decode(RewardConfig, reward_dict)
 
     return ValueNetworkMetadata(
