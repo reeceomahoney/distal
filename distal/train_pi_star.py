@@ -81,7 +81,7 @@ class RECAPPiStarTrainingConfig:
     job_name: str = "pistar-knn-libero-task-adv-pi05-base"
     dataset_repo_id: str = "reece-omahoney/pi05-libero-10"
 
-    train_steps: int = 20_000
+    train_steps: int = 8000
     batch_size: int = 64
     num_workers: int = 4
     val_split_ratio: float = 0.1
@@ -101,7 +101,7 @@ class RECAPPiStarTrainingConfig:
     # Exponential moving average over trainable params (0.0 disables; 0.999 typical).
     # Shadow is kept in fp32 so the 1e-3 increment doesn't underflow bf16 weights.
     # Eval, validation, "best"/"last" save, and final hub push all use EMA weights.
-    ema_decay: float = 0.0
+    ema_decay: float = 0.999
 
     policy: PiStar06Config = field(
         default_factory=lambda: PiStar06Config(
@@ -110,6 +110,8 @@ class RECAPPiStarTrainingConfig:
             n_action_steps=10,
             gradient_checkpointing=True,
             compile_model=True,
+            freeze_vision_encoder=True,
+            scheduler_decay_steps=8000,
         )
     )
     advantage: AdvantageConfig = field(

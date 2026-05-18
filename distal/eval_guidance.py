@@ -15,8 +15,13 @@ import draccus
 
 @dataclass
 class EvalGuidanceConfig:
-    policy_path: str = "reece-omahoney/pistar-knn-libero"
-    guidance_scales: list[float] = field(default_factory=lambda: [1.0, 1.5, 2.0, 2.5])
+    policy_path: str = (
+        "/data/engs-robotics-ml/kebl6123/distal/outputs/pistar/"
+        "2026-05-16/17-54-31/checkpoints/best/pretrained_model"
+    )
+    guidance_scales: list[float] = field(
+        default_factory=lambda: [1.0, 1.1, 1.2, 1.3, 1.4, 1.5]
+    )
     libero_plus: bool = False
 
 

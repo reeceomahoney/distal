@@ -1,12 +1,13 @@
 env:
   type: libero
   task: libero_10
+  task_ids: [8]
   fps: 20
   observation_height: 256
   observation_width: 256
 
 eval:
-  n_episodes: 50
+  n_episodes: 25
   batch_size: 25
 
 policy:
