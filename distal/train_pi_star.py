@@ -242,9 +242,7 @@ class EMA:
             shadow = self.shadow.get(name)
             if shadow is None:
                 continue
-            shadow.mul_(self.decay).add_(
-                param.detach().to(torch.float32), alpha=1.0 - self.decay
-            )
+            shadow.mul_(self.decay).add_(param.detach(), alpha=1.0 - self.decay)
 
     @contextmanager
     def apply_to(self, model):
