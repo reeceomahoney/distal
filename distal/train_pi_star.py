@@ -29,13 +29,17 @@ import resource
 import time as time_module
 from contextlib import contextmanager, nullcontext
 from dataclasses import asdict, dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import draccus
 import torch
 from accelerate import Accelerator
-from accelerate.utils import DistributedDataParallelKwargs, broadcast_object_list
+from accelerate.utils import (
+    DistributedDataParallelKwargs,
+    InitProcessGroupKwargs,
+    broadcast_object_list,
+)
 from lerobot.common.train_utils import load_training_state, save_training_state
 from lerobot.configs import parser
 from lerobot.configs.types import FeatureType
@@ -519,9 +523,10 @@ def run_recap_pistar_train_val(cfg: RECAPPiStarTrainingConfig) -> None:
     set_seed(cfg.seed)
 
     ddp_kwargs = DistributedDataParallelKwargs(find_unused_parameters=True)
+    pg_kwargs = InitProcessGroupKwargs(timeout=timedelta(hours=1))
     accelerator = Accelerator(
         step_scheduler_with_optimizer=False,
-        kwargs_handlers=[ddp_kwargs],
+        kwargs_handlers=[ddp_kwargs, pg_kwargs],
         mixed_precision="bf16",
     )
     is_main = accelerator.is_main_process
@@ -820,12 +825,9 @@ def run_recap_pistar_train_val(cfg: RECAPPiStarTrainingConfig) -> None:
     )
 
     # ── 7. Optimizer and scheduler (pi05 presets) ───────────────────────
-    from lerobot.policies.pi05.configuration_pi05 import PI05Config
-
     trainable_params = policy.get_optim_params()
-    pi05_defaults = PI05Config()
-    optimizer_preset = pi05_defaults.get_optimizer_preset()
-    scheduler_preset = pi05_defaults.get_scheduler_preset()
+    optimizer_preset = policy_cfg.get_optimizer_preset()
+    scheduler_preset = policy_cfg.get_scheduler_preset()
     max_grad_norm = optimizer_preset.grad_clip_norm
     optimizer = optimizer_preset.build(trainable_params)
     scheduler = scheduler_preset.build(optimizer, num_training_steps=cfg.train_steps)
