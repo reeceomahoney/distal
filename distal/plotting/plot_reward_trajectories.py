@@ -43,7 +43,7 @@ class PlotRewardTrajectoriesConfig:
     num_progress_points: int = 100
     seed: int = 0
     device: str = "cuda"
-    output_path: str = "outputs/failure_rewards.png"
+    output_path: str = "outputs/reward_trajectories.png"
     cache: bool = True
 
 
