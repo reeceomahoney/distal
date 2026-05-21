@@ -85,7 +85,7 @@ class RECAPPiStarTrainingConfig:
     job_name: str = "pistar-knn-libero-task-adv-pi05-base"
     dataset_repo_id: str = "reece-omahoney/pi05-libero-10"
 
-    train_steps: int = 4500
+    train_steps: int = 5000
     batch_size: int = 128
     num_workers: int = 4
     val_split_ratio: float = 0.1
@@ -109,7 +109,7 @@ class RECAPPiStarTrainingConfig:
             optimizer_lr=5e-5,
             scheduler_warmup_steps=1000,
             scheduler_decay_lr=5e-7,
-            scheduler_decay_steps=4500,
+            scheduler_decay_steps=5000,
         )
     )
     advantage: AdvantageConfig = field(
