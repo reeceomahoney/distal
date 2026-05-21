@@ -22,7 +22,7 @@ class RewardConfig(draccus.ChoiceRegistry, abc.ABC):
     """Per-step reward source for value-network training.
 
     Subclasses are registered as draccus choices; pick one with
-    ``--reward.type=[steps|maha|knn|variance]`` and override its fields.
+    ``--reward.type=[steps|maha|knn|variance|vae]`` and override its fields.
     """
 
     # Cache computed per-frame rewards locally (HF_ASSETS_CACHE/distal/rewards),
@@ -240,6 +240,76 @@ class KnnRewardConfig(RewardConfig):
                 label="kNN",
             ),
             label="knn",
+            use_cache=self.cache,
+        )
+
+
+@RewardConfig.register_subclass("vae")
+@dataclass
+class VaeRewardConfig(RewardConfig):
+    """Negative ELBO of each frame's VLM embedding under a VAE fit to the base
+    training distribution (distal/rewards/vae.py). High neg-ELBO = unlikely /
+    out-of-distribution = low reward, matching maha/knn. Train the VAE first
+    with distal/rewards/train_vae.py."""
+
+    base_policy: str = "lerobot/pi05-libero"
+    vae_path: str = "reece-omahoney/pi05-libero-10-vae"
+    embed_batch_size: int = 128
+    embed_num_workers: int = 4
+    eval_samples: int = 16
+    eval_seed: int = 0
+
+    def compute_distances(
+        self,
+        dataset: LeRobotDataset,
+        device: torch.device,
+        frame_indices: list[int] | None = None,
+    ) -> np.ndarray:
+        from distal.rewards.vae import compute_vae_distances_for_dataset
+
+        return compute_vae_distances_for_dataset(
+            dataset=dataset,
+            policy_path=self.base_policy,
+            vae_path=self.vae_path,
+            device=device,
+            batch_size=self.embed_batch_size,
+            num_workers=self.embed_num_workers,
+            eval_samples=self.eval_samples,
+            eval_seed=self.eval_seed,
+            frame_indices=frame_indices,
+        )
+
+    def compute_step_rewards(
+        self,
+        dataset: LeRobotDataset,
+        device: torch.device,
+    ) -> dict[int, float]:
+        from distal.rewards.maha import (
+            load_or_compute_rewards,
+            normalize_distances_to_rewards,
+        )
+
+        logging.info(
+            f"Loading or computing VAE-likelihood rewards using {self.vae_path} "
+            f"(dataset cache: {dataset.repo_id})..."
+        )
+        sig_dict = {
+            "mode": "vae",
+            "dataset_repo_id": dataset.repo_id,
+            "policy_path": self.base_policy,
+            "vae_path": self.vae_path,
+            "eval_samples": self.eval_samples,
+            "eval_seed": self.eval_seed,
+        }
+        return load_or_compute_rewards(
+            dataset=dataset,
+            sig_dict=sig_dict,
+            compute_fn=lambda: normalize_distances_to_rewards(
+                self.compute_distances(dataset, device),
+                dataset,
+                label="VAE",
+            ),
+            label="vae",
             use_cache=self.cache,
         )
 
