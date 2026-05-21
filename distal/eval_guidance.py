@@ -47,6 +47,8 @@ def main(cfg: EvalGuidanceConfig):
                 "--config_path=configs/eval.yaml",
                 f"--policy.path={cfg.policy_path}",
                 f"--policy.cfg_beta={beta}",
+                "--env.task_ids=[8]",
+                "--eval.n_episodes=25",
             ]
             eval_root = Path("outputs/eval")
             summary_glob = "eval_info.json"
