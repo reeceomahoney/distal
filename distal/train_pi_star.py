@@ -597,7 +597,8 @@ def run_recap_pistar_train_val(cfg: RECAPPiStarTrainingConfig) -> None:
         )
     else:
         logging.info(
-            "Advantage conditioning DISABLED — training vanilla Pi0.5 "
+            "Advantage conditioning DISABLED — supervised fine-tuning mode: "
+            "training vanilla Pi0.5 on successful episodes only "
             "(no value network, no advantage text injection)"
         )
         cfg.policy.advantage_dropout = 1.0
@@ -623,6 +624,27 @@ def run_recap_pistar_train_val(cfg: RECAPPiStarTrainingConfig) -> None:
         num_value_bins=num_value_bins,
         step_rewards=step_rewards,
     )
+
+    # In supervised fine-tuning mode (advantage conditioning disabled), drop
+    # every frame belonging to a failed episode so the policy only ever sees
+    # successful demonstrations.
+    if not cfg.policy.enable_advantage_conditioning:
+        n_frames_before = len(frame_targets)
+        frame_targets = [
+            t for t in frame_targets if success_by_episode.get(t.episode_index, 0)
+        ]
+        n_success_eps = len({t.episode_index for t in frame_targets})
+        if not frame_targets:
+            raise RuntimeError(
+                "SFT mode: no successful episodes in the dataset — nothing to "
+                "train on. Check the dataset's 'success' column."
+            )
+        logging.info(
+            f"SFT mode: keeping {n_success_eps} successful episodes "
+            f"({len(frame_targets)}/{n_frames_before} frames); "
+            "failed episodes excluded from train/val."
+        )
+
     train_targets, val_targets = split_train_val_targets(
         frame_targets=frame_targets,
         val_ratio=cfg.val_split_ratio,
