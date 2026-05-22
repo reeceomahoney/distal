@@ -86,7 +86,7 @@ class RECAPValueTrainingConfig:
     dataset_repo_id: str = "reece-omahoney/pi05-libero-plus"
     train_steps: int = 20_000
     batch_size: int = 64
-    num_workers: int = 8
+    num_workers: int = 4
     learning_rate: float = 2.5e-5
     val_split_ratio: float = 0.1
     seed: int = 42
@@ -787,6 +787,7 @@ def run_recap_value_train_val(cfg: RECAPValueTrainingConfig) -> None:
         batch_size=cfg.batch_size,
         shuffle=True,
         num_workers=cfg.num_workers,
+        multiprocessing_context="spawn",
         pin_memory=(device.type == "cuda"),
         drop_last=False,
     )
@@ -794,7 +795,8 @@ def run_recap_value_train_val(cfg: RECAPValueTrainingConfig) -> None:
         val_dataset,
         batch_size=cfg.batch_size,
         shuffle=True,
-        num_workers=0,
+        num_workers=2,
+        multiprocessing_context="spawn",
         pin_memory=(device.type == "cuda"),
         drop_last=False,
     )
@@ -849,7 +851,8 @@ def run_recap_value_train_val(cfg: RECAPValueTrainingConfig) -> None:
             val_plot_dataset,
             batch_size=cfg.batch_size,
             shuffle=False,
-            num_workers=0,
+            num_workers=2,
+            multiprocessing_context="spawn",
             pin_memory=(device.type == "cuda"),
             drop_last=False,
         )
