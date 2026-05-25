@@ -35,6 +35,7 @@ envs:
   - MKL_NUM_THREADS: 8
   - TORCHINDUCTOR_CACHE_DIR: $HOME/.cache/torchinductor
   - TRITON_CACHE_DIR: $HOME/.cache/triton
+  - TORCHINDUCTOR_AUTOTUNE_LOCAL_CACHE: 0
   - PYTORCH_CUDA_ALLOC_CONF: expandable_segments:True
   - CMAKE_POLICY_VERSION_MINIMUM: 3.5
 

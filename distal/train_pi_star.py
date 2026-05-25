@@ -93,8 +93,9 @@ class RECAPPiStarTrainingConfig:
     device: str = "cuda"
     log_every_n_steps: int = 100
     max_val_steps: int | None = 50
-    sim_eval_every_n_train_steps: int = 500
-    save_every_n_steps: int = 500
+    val_every_n_train_steps: int = 250
+    sim_eval_every_n_train_steps: int = 0
+    save_every_n_steps: int = 1000
     ema_decay: float = 0.999
     resume_from: Path | None = None
 
@@ -105,6 +106,7 @@ class RECAPPiStarTrainingConfig:
             n_action_steps=10,
             gradient_checkpointing=True,
             compile_model=True,
+            compile_mode="max-autotune-no-cudagraphs",
             train_expert_only=True,
             optimizer_lr=5e-5,
             scheduler_warmup_steps=1000,
@@ -848,7 +850,10 @@ def run_recap_pistar_train_val(cfg: RECAPPiStarTrainingConfig) -> None:
     scheduler_preset = policy_cfg.get_scheduler_preset()
     max_grad_norm = optimizer_preset.grad_clip_norm
     optimizer = optimizer_preset.build(trainable_params)
-    scheduler = scheduler_preset.build(optimizer, num_training_steps=cfg.train_steps)
+    scheduler = scheduler_preset.build(
+        optimizer,
+        num_training_steps=max(cfg.train_steps, scheduler_preset.num_decay_steps),
+    )
     if is_main:
         logging.info(
             "Using pi05 optimizer/scheduler presets: "
@@ -1087,9 +1092,9 @@ def run_recap_pistar_train_val(cfg: RECAPPiStarTrainingConfig) -> None:
             }
         )
 
-        # ── Validate (on sim-eval cadence to amortise its ~25% wall-time cost) ──
-        is_val_step = cfg.sim_eval_every_n_train_steps > 0 and (
-            global_step % cfg.sim_eval_every_n_train_steps == 0
+        # ── Validate (independent cadence from sim eval) ─────────────
+        is_val_step = cfg.val_every_n_train_steps > 0 and (
+            global_step % cfg.val_every_n_train_steps == 0
             or global_step == cfg.train_steps
         )
         if is_val_step and is_main:

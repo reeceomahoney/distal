@@ -21,8 +21,8 @@ class Config:
     dataset_repo_ids: list[str] = field(
         default_factory=lambda: [
             "reece-omahoney/remove-pen-lid-2",
-            "reece-omahoney/remove-ethernet",
-            "reece-omahoney/insert-ethernet",
+            "reece-omahoney/remove-ethernet-2",
+            "reece-omahoney/insert-ethernet-2",
         ]
     )
     episode: int = 31
