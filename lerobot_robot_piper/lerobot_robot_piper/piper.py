@@ -1,6 +1,8 @@
 import time
 from typing import Any
 
+import numpy as np
+
 from lerobot.cameras import make_cameras_from_configs
 from lerobot.robots import Robot
 from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
@@ -22,6 +24,7 @@ class Piper(Robot):
         }
         self.cameras = make_cameras_from_configs(config.cameras)
         self._is_piper_connected = False
+        self.action_bias = load_action_bias(config.action_bias_path)
 
     @property
     def _motors_ft(self) -> dict[str, type]:
@@ -103,7 +106,11 @@ class Piper(Robot):
             js = arm.GetArmJointMsgs().joint_state
             g = arm.GetArmGripperMsgs()
             for i in range(1, 7):
-                obs[f"{side}_joint_{i}.pos"] = getattr(js, f"joint_{i}") / 1000.0
+                key = f"{side}_joint_{i}.pos"
+                value = getattr(js, f"joint_{i}") / 1000.0
+                if self.config.apply_bias_to_obs:
+                    value -= self.action_bias.get(key, 0.0)
+                obs[key] = value
             obs[f"{side}_gripper.pos"] = g.gripper_state.grippers_angle / 10000.0
 
         for cam_key, cam in self.cameras.items():
@@ -117,7 +124,10 @@ class Piper(Robot):
         if not self.config.teleop_mode:
             for side, arm in self.arms.items():
                 j_ints = [
-                    int(round(action[f"{side}_joint_{i}.pos"] * 1000.0))
+                    int(round(
+                        (action[f"{side}_joint_{i}.pos"] - self.action_bias.get(f"{side}_joint_{i}.pos", 0.0))
+                        * 1000.0
+                    ))
                     for i in range(1, 7)
                 ]
                 gripper_mm = int(round(action[f"{side}_gripper.pos"] * 10000.0))
@@ -134,3 +144,17 @@ class Piper(Robot):
 
         for cam in self.cameras.values():
             cam.disconnect()
+
+
+def load_action_bias(path: str | None) -> dict[str, float]:
+    if not path:
+        return {}
+    data = np.load(path, allow_pickle=True)
+    names = [str(n) for n in data["names"]]
+    n_done = int(data["n_done"])
+    diag_bias = (data["live_state"][:n_done] - data["recorded_state"][:n_done]).mean(axis=0)
+    bias = {n: float(b) for n, b in zip(names, diag_bias) if "gripper" not in n}
+    print(f"Piper: loaded action_bias from {path}")
+    for n, b in bias.items():
+        print(f"  {n:24s} bias={b:+.3f}")
+    return bias

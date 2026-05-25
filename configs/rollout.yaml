@@ -12,10 +12,13 @@ inference:
 robot:
   type: piper
   teleop_mode: false
+  action_bias_path: joint_bias.npz
+  apply_bias_to_obs: true
 
 policy:
   path: reece-omahoney/pi05-remove-pen-lid-2
   n_action_steps: 20
+  dtype: bfloat16
 
 dataset:
   repo_id: reece-omahoney/rollout_remove-pen-lid-2

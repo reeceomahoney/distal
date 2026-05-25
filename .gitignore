@@ -20,3 +20,5 @@ lerobot/
 
 # direnv
 .envrc
+
+*.npz
