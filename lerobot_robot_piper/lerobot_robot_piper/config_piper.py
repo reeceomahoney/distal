@@ -40,3 +40,7 @@ class PiperConfig(RobotConfig):
     teleop_mode: bool = True
     action_bias_path: str | None = None
     apply_bias_to_obs: bool = False
+    # EMA smoothing on outgoing actions: smoothed = alpha * new + (1 - alpha) * prev.
+    # None disables smoothing. Lower alpha = more smoothing. Only applied in policy
+    # rollout (teleop_mode=False).
+    action_ema_alpha: float | None = None

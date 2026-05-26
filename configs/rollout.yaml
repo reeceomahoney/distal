@@ -1,6 +1,6 @@
 strategy:
   type: episodic
-  max_episode_steps: 400
+  max_episode_steps: 1000
   end_key: e
   discard_key: d
   success_key: s
@@ -12,24 +12,26 @@ inference:
 robot:
   type: piper
   teleop_mode: false
+  action_ema_alpha: 0.3
   action_bias_path: joint_bias.npz
-  apply_bias_to_obs: true
+  apply_bias_to_obs: false
 
 policy:
-  path: reece-omahoney/pi05-remove-pen-lid-2
+  path: reece-omahoney/pi05-remove-ethernet-2-bf16
   n_action_steps: 20
   dtype: bfloat16
 
 dataset:
-  repo_id: reece-omahoney/rollout_remove-pen-lid-2
-  single_task: Remove the pen lid
+  repo_id: reece-omahoney/rollout_insert-ethernet
+  single_task: Remove the ethernet cable
   fps: 20
   streaming_encoding: true
   encoder_threads: 5
-  vcodec: auto
+  vcodec: h264
   push_to_hub: false
 
 fps: 20
-task: Remove the pen lid
-use_torch_compile: false
+task: Remove the ethernet cable
+use_torch_compile: true
 display_data: false
+device: cuda

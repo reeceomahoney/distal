@@ -25,6 +25,7 @@ class Piper(Robot):
         self.cameras = make_cameras_from_configs(config.cameras)
         self._is_piper_connected = False
         self.action_bias = load_action_bias(config.action_bias_path)
+        self.prev_action: dict[str, float] | None = None
 
     @property
     def _motors_ft(self) -> dict[str, type]:
@@ -122,6 +123,18 @@ class Piper(Robot):
     def send_action(self, action: dict[str, Any]) -> dict[str, Any]:
         # In teleop mode, the hardware handles control - just return the action
         if not self.config.teleop_mode:
+            alpha = self.config.action_ema_alpha
+            if alpha is not None:
+                if self.prev_action is None:
+                    smoothed = dict(action)
+                else:
+                    smoothed = {
+                        k: alpha * action[k] + (1.0 - alpha) * self.prev_action[k]
+                        for k in action
+                    }
+                self.prev_action = smoothed
+                action = smoothed
+
             for side, arm in self.arms.items():
                 j_ints = [
                     int(round(
@@ -144,6 +157,8 @@ class Piper(Robot):
 
         for cam in self.cameras.values():
             cam.disconnect()
+
+        self.prev_action = None
 
 
 def load_action_bias(path: str | None) -> dict[str, float]:
