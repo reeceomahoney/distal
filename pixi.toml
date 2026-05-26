@@ -49,9 +49,16 @@ pre-commit = ">=4.5.1"
 ruff = ">=0.15.2"
 ty = ">=0.0.21"
 lerobot-doctor = { git = "https://github.com/reeceomahoney/lerobot-doctor", branch = "distal" }
+lerobot_robot_piper = { path = "lerobot_robot_piper", editable = true }
+lerobot_teleoperator_piper = { path = "lerobot_teleoperator_piper", editable = true }
+pynput = ">=1.7"
 
 [target.linux-64.pypi-dependencies]
 nvidia-npp-cu12 = ">=12,<13"
+lerobot = { git = "https://github.com/reeceomahoney/lerobot", branch = "distal", extras = [
+  "intelrealsense",
+  "deepdiff-dep",
+] }
 
 [target.linux-aarch64.pypi-dependencies]
 nvidia-npp-cu12 = ">=12,<13"
@@ -63,15 +70,6 @@ index-strategy = "unsafe-best-match"
 [feature.cu128.pypi-options]
 extra-index-urls = ["https://download.pytorch.org/whl/cu128"]
 index-strategy = "unsafe-best-match"
-
-[feature.hardware.target.linux-64.pypi-dependencies]
-lerobot = { git = "https://github.com/reeceomahoney/lerobot", branch = "distal", extras = [
-  "intelrealsense",
-  "deepdiff-dep",
-] }
-lerobot_robot_piper = { path = "lerobot_robot_piper", editable = true }
-lerobot_teleoperator_piper = { path = "lerobot_teleoperator_piper", editable = true }
-pynput = ">=1.7"
 
 # ============================================================
 # Activation
@@ -90,7 +88,6 @@ LD_LIBRARY_PATH = "$CONDA_PREFIX/lib/python3.12/site-packages/nvidia/npp/lib:$LD
 [environments]
 default = { features = ["cu128"], solve-group = "cu128" }
 cu126 = { features = ["cu126"], solve-group = "cu126" }
-hardware = { features = ["hardware", "cu128"], solve-group = "cu128" }
 
 # ============================================================
 # Tasks
@@ -107,11 +104,11 @@ accelerate launch --multi_gpu --num_processes=2 -m \
 description = "Evaluate policy in LIBERO sim"
 cmd = "lerobot-eval --config_path=configs/eval.yaml"
 
-[feature.hardware.tasks.record]
+[tasks.record]
 description = "Record demonstrations via teleop"
 cmd = "lerobot-record --config_path=configs/record.yaml"
 
-[feature.hardware.tasks.rollout]
+[tasks.rollout]
 description = "Rollout trained policy on physical arm"
 cmd = "lerobot-rollout --config_path=configs/rollout.yaml"
 
