@@ -27,6 +27,7 @@ lerobot = { git = "https://github.com/reeceomahoney/lerobot", branch = "distal",
   "libero-plus",
   "pi",
   "training",
+  "deepdiff-dep",
 ] }
 lerobot_policy_pistar06 = { path = "lerobot_policy_pistar06", editable = true }
 slurm-tools = { git = "https://github.com/reeceomahoney/slurm-tools.git" }
@@ -56,8 +57,12 @@ pynput = ">=1.7"
 [target.linux-64.pypi-dependencies]
 nvidia-npp-cu12 = ">=12,<13"
 lerobot = { git = "https://github.com/reeceomahoney/lerobot", branch = "distal", extras = [
-  "intelrealsense",
+  "libero",
+  "libero-plus",
+  "pi",
+  "training",
   "deepdiff-dep",
+  "intelrealsense",
 ] }
 
 [target.linux-aarch64.pypi-dependencies]
