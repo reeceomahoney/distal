@@ -1,14 +1,18 @@
+import os
 import time
 from typing import Any
 
 import numpy as np
-
 from lerobot.cameras import make_cameras_from_configs
 from lerobot.robots import Robot
 from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
 from piper_sdk import C_PiperInterface_V2
 
 from .config_piper import PiperConfig
+
+POSTPROCESSOR_STATS_FILENAME = (
+    "policy_postprocessor_step_0_unnormalizer_processor.safetensors"
+)
 
 
 class Piper(Robot):
@@ -25,6 +29,11 @@ class Piper(Robot):
         self.cameras = make_cameras_from_configs(config.cameras)
         self._is_piper_connected = False
         self.action_bias = load_action_bias(config.action_bias_path)
+        self.action_clip = (
+            load_action_clip_stats(list(self.action_features.keys()))
+            if config.clip_action
+            else None
+        )
         self.prev_action: dict[str, float] | None = None
 
     @property
@@ -123,6 +132,14 @@ class Piper(Robot):
     def send_action(self, action: dict[str, Any]) -> dict[str, Any]:
         # In teleop mode, the hardware handles control - just return the action
         if not self.config.teleop_mode:
+            if self.action_clip is not None:
+                action = {
+                    k: max(self.action_clip[k][0], min(self.action_clip[k][1], v))
+                    if k in self.action_clip
+                    else v
+                    for k, v in action.items()
+                }
+
             alpha = self.config.action_ema_alpha
             if alpha is not None:
                 if self.prev_action is None:
@@ -137,10 +154,15 @@ class Piper(Robot):
 
             for side, arm in self.arms.items():
                 j_ints = [
-                    int(round(
-                        (action[f"{side}_joint_{i}.pos"] - self.action_bias.get(f"{side}_joint_{i}.pos", 0.0))
-                        * 1000.0
-                    ))
+                    int(
+                        round(
+                            (
+                                action[f"{side}_joint_{i}.pos"]
+                                - self.action_bias.get(f"{side}_joint_{i}.pos", 0.0)
+                            )
+                            * 1000.0
+                        )
+                    )
                     for i in range(1, 7)
                 ]
                 gripper_mm = int(round(action[f"{side}_gripper.pos"] * 10000.0))
@@ -167,9 +189,45 @@ def load_action_bias(path: str | None) -> dict[str, float]:
     data = np.load(path, allow_pickle=True)
     names = [str(n) for n in data["names"]]
     n_done = int(data["n_done"])
-    diag_bias = (data["live_state"][:n_done] - data["recorded_state"][:n_done]).mean(axis=0)
+    diag_bias = (data["live_state"][:n_done] - data["recorded_state"][:n_done]).mean(
+        axis=0
+    )
     bias = {n: float(b) for n, b in zip(names, diag_bias) if "gripper" not in n}
     print(f"Piper: loaded action_bias from {path}")
     for n, b in bias.items():
         print(f"  {n:24s} bias={b:+.3f}")
     return bias
+
+
+def load_action_clip_stats(action_keys: list[str]) -> dict[str, tuple[float, float]]:
+    from lerobot.configs import parser
+    from safetensors import safe_open
+
+    policy_path = parser.get_path_arg("policy")
+    if not policy_path:
+        raise ValueError("clip_action=True requires --policy.path to be set")
+
+    if os.path.isdir(policy_path):
+        stats_file = os.path.join(policy_path, POSTPROCESSOR_STATS_FILENAME)
+    else:
+        from huggingface_hub import hf_hub_download
+
+        stats_file = hf_hub_download(
+            repo_id=policy_path, filename=POSTPROCESSOR_STATS_FILENAME
+        )
+
+    with safe_open(stats_file, framework="pt") as f:
+        q01 = f.get_tensor("action.q01").tolist()
+        q99 = f.get_tensor("action.q99").tolist()
+
+    if len(q01) != len(action_keys):
+        raise ValueError(
+            f"Policy action dim ({len(q01)}) does not match "
+            f"Piper action_features ({len(action_keys)} keys: {action_keys})"
+        )
+
+    clip = {k: (float(q01[i]), float(q99[i])) for i, k in enumerate(action_keys)}
+    print(f"Piper: loaded action clip stats from {policy_path}")
+    for k, (lo, hi) in clip.items():
+        print(f"  {k:24s} [{lo:+.3f}, {hi:+.3f}]")
+    return clip

@@ -44,3 +44,7 @@ class PiperConfig(RobotConfig):
     # None disables smoothing. Lower alpha = more smoothing. Only applied in policy
     # rollout (teleop_mode=False).
     action_ema_alpha: float | None = None
+    # Clip outgoing actions to the [q01, q99] range from the current policy's
+    # postprocessor unnormalizer safetensors. Only applied in policy rollout
+    # (teleop_mode=False). The policy path is resolved from --policy.path.
+    clip_action: bool = False

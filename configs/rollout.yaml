@@ -13,6 +13,7 @@ robot:
   type: piper
   teleop_mode: false
   action_ema_alpha: 0.3
+  clip_action: true
   action_bias_path: joint_bias.npz
   apply_bias_to_obs: false
 
