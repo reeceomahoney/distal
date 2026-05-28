@@ -63,6 +63,12 @@ class RewardConfig(draccus.ChoiceRegistry, abc.ABC):
             "use 'maha' or 'knn'."
         )
 
+    def subsample_frame_indices(
+        self, frame_indices: list[int] | None
+    ) -> list[int] | None:
+        """Optionally cap how many frames a distance computation scores."""
+        return frame_indices
+
 
 @RewardConfig.register_subclass("steps")
 @dataclass
@@ -326,10 +332,25 @@ class VarianceRewardConfig(RewardConfig):
     """
 
     base_policy: str = "lerobot/pi05-libero"
-    batch_size: int = 8
+    batch_size: int = 32
     num_workers: int = 4
-    num_samples: int = 16
+    num_samples: int = 8
     noise_seed: int = 0
+    max_frames: int | None = None
+    subsample_seed: int = 0
+
+    def subsample_frame_indices(
+        self, frame_indices: list[int] | None
+    ) -> list[int] | None:
+        if (
+            frame_indices is None
+            or self.max_frames is None
+            or self.max_frames >= len(frame_indices)
+        ):
+            return frame_indices
+        rng = np.random.default_rng(self.subsample_seed)
+        chosen = rng.choice(frame_indices, size=self.max_frames, replace=False)
+        return sorted(int(i) for i in chosen)
 
     def compute_distances(
         self,
@@ -347,7 +368,7 @@ class VarianceRewardConfig(RewardConfig):
             num_workers=self.num_workers,
             num_samples=self.num_samples,
             noise_seed=self.noise_seed,
-            frame_indices=frame_indices,
+            frame_indices=self.subsample_frame_indices(frame_indices),
         )
 
     def compute_step_rewards(
