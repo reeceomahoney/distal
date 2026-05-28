@@ -22,7 +22,6 @@ class Config:
         default_factory=lambda: [
             "reece-omahoney/remove-pen-lid-2",
             "reece-omahoney/remove-ethernet-2",
-            "reece-omahoney/insert-ethernet-2",
         ]
     )
     episode: int = 31
