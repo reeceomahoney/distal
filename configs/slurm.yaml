@@ -40,5 +40,5 @@ envs:
   - CMAKE_POLICY_VERSION_MINIMUM: 3.5
 
 command: |-
-  pixi run -e cu126 accelerate launch --multi_gpu --num_processes=2 distal/train_pi_star.py
-  # pixi run python distal/train_value.py
+  module load cuda/12.6
+  pixi run --frozen -e cu126 accelerate launch --multi_gpu --num_processes=2 distal/train_pi_star.py
