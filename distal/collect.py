@@ -28,7 +28,7 @@ from lerobot.utils.device_utils import get_safe_torch_device
 from lerobot.utils.import_utils import register_third_party_plugins
 from lerobot.utils.random_utils import set_seed
 from lerobot.utils.utils import init_logging
-from libero.libero import benchmark  # ty: ignore[unresolved-import]
+from libero.libero import benchmark
 
 from distal.collect_libero_plus import auto_parallel_envs
 

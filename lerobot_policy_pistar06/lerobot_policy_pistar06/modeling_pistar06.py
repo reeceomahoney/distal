@@ -1926,60 +1926,19 @@ class PiStar06Policy(PreTrainedPolicy):
         tokens = batch[OBS_LANGUAGE_TOKENS]
         masks = batch[OBS_LANGUAGE_ATTENTION_MASK]
 
-        bsize = tokens.shape[0]
-        device = tokens.device
-
         if self.config.enable_advantage_conditioning:
-            positive_indicator = torch.ones(bsize, dtype=torch.bool, device=device)
+            bsize = tokens.shape[0]
+            positive_indicator = torch.ones(
+                bsize, dtype=torch.bool, device=tokens.device
+            )
             tokens, masks = self._inject_advantage_text(
                 tokens, masks, positive_indicator, None
             )
 
-        actions_shape = (
-            bsize,
-            self.config.chunk_size,
-            self.config.max_action_dim,
-        )
-        noise = self.model.sample_noise(actions_shape, device)
-
-        prefix_embs, prefix_pad_masks, prefix_att_masks = self.model.embed_prefix(
-            images, img_masks, tokens, masks
-        )
-        prefix_att_2d_masks = make_att_2d_masks(prefix_pad_masks, prefix_att_masks)
-        prefix_position_ids = torch.cumsum(prefix_pad_masks, dim=1) - 1
-        prefix_att_2d_masks_4d = self.model._prepare_attention_masks_4d(
-            prefix_att_2d_masks
-        )
-        language_model = self.model.paligemma_with_expert.paligemma.model.language_model
-        language_model.config._attn_implementation = "eager"  # noqa: SLF001
-
-        _, past_key_values = self.model.paligemma_with_expert.forward(
-            attention_mask=prefix_att_2d_masks_4d,
-            position_ids=prefix_position_ids,  # ty:ignore[invalid-argument-type]
-            past_key_values=None,
-            inputs_embeds=[prefix_embs, None],  # ty:ignore[invalid-argument-type]
-            use_cache=True,
-        )
-
-        num_steps = self.config.num_inference_steps
-        dt = -1.0 / num_steps
-        x_t = noise
-
-        for step in range(num_steps):
-            time_val = 1.0 + step * dt
-            time_tensor = torch.tensor(
-                time_val, dtype=torch.float32, device=device
-            ).expand(bsize)
-            v_t = self.model.denoise_step(
-                prefix_pad_masks=prefix_pad_masks,
-                past_key_values=past_key_values,
-                x_t=x_t,
-                timestep=time_tensor,
-            )
-            x_t = x_t + dt * v_t
+        actions = self.model.sample_actions(images, img_masks, tokens, masks, **kwargs)  # ty:ignore[missing-argument, invalid-argument-type]
 
         original_action_dim = self.config.output_features[ACTION].shape[0]  # ty:ignore[not-subscriptable]
-        return x_t[:, :, :original_action_dim]
+        return actions[:, :, :original_action_dim]
 
     def _predict_action_chunk_cfg(
         self,

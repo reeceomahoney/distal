@@ -22,8 +22,8 @@ def main():
     parser.add_argument(
         "--bias-from",
         default=None,
-        help="Path to joint_bias.npz; subtract mean(live-rec) per joint from each action. "
-        "Grippers are excluded.",
+        help="Path to joint_bias.npz; subtract mean(live-rec) per joint "
+        "from each action. Grippers are excluded.",
     )
     args = parser.parse_args()
 

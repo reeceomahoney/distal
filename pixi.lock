@@ -209,7 +209,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/noarch/wayland-protocols-1.47-hd8ed1ab_0.conda
       - pypi: .
       - pypi: git+https://github.com/reeceomahoney/lerobot-doctor?branch=distal#07597438ec38a89401cbfb353e58d2efb9b6cfd1
-      - pypi: git+https://github.com/reeceomahoney/lerobot?branch=distal#e75115bd5b79521a30a6029eea732a766a3b4c13
+      - pypi: git+https://github.com/reeceomahoney/lerobot?branch=distal#32327d56abd3cb20968e004147beeb3a6d1ebe30
       - pypi: git+https://github.com/reeceomahoney/libero-plus?rev=distal-deps#cd94bd60f521ff3a7c7e42de171eddbf4f7620e5
       - pypi: git+https://github.com/reeceomahoney/skypilot?branch=vast-no-geo-pin#1b156c120ead15d10863ab1832b80b6a076ed08c
       - pypi: git+https://github.com/reeceomahoney/slurm-tools#23a53f49e1cb436fefdeefa51f52e995816198c2
@@ -676,7 +676,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/noarch/tzdata-2025c-hc9c84f9_1.conda
       - pypi: .
       - pypi: git+https://github.com/reeceomahoney/lerobot-doctor?branch=distal#07597438ec38a89401cbfb353e58d2efb9b6cfd1
-      - pypi: git+https://github.com/reeceomahoney/lerobot?branch=distal#e75115bd5b79521a30a6029eea732a766a3b4c13
+      - pypi: git+https://github.com/reeceomahoney/lerobot?branch=distal#32327d56abd3cb20968e004147beeb3a6d1ebe30
       - pypi: git+https://github.com/reeceomahoney/libero-plus?rev=distal-deps#cd94bd60f521ff3a7c7e42de171eddbf4f7620e5
       - pypi: git+https://github.com/reeceomahoney/skypilot?branch=vast-no-geo-pin#1b156c120ead15d10863ab1832b80b6a076ed08c
       - pypi: git+https://github.com/reeceomahoney/slurm-tools#23a53f49e1cb436fefdeefa51f52e995816198c2
@@ -1100,7 +1100,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/zstd-1.5.7-hbf9d68e_6.conda
       - pypi: .
       - pypi: git+https://github.com/reeceomahoney/lerobot-doctor?branch=distal#07597438ec38a89401cbfb353e58d2efb9b6cfd1
-      - pypi: git+https://github.com/reeceomahoney/lerobot?branch=distal#e75115bd5b79521a30a6029eea732a766a3b4c13
+      - pypi: git+https://github.com/reeceomahoney/lerobot?branch=distal#32327d56abd3cb20968e004147beeb3a6d1ebe30
       - pypi: git+https://github.com/reeceomahoney/skypilot?branch=vast-no-geo-pin#1b156c120ead15d10863ab1832b80b6a076ed08c
       - pypi: git+https://github.com/reeceomahoney/slurm-tools#23a53f49e1cb436fefdeefa51f52e995816198c2
       - pypi: https://download.pytorch.org/whl/colorama-0.4.6-py2.py3-none-any.whl
@@ -1525,7 +1525,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/noarch/wayland-protocols-1.47-hd8ed1ab_0.conda
       - pypi: .
       - pypi: git+https://github.com/reeceomahoney/lerobot-doctor?branch=distal#07597438ec38a89401cbfb353e58d2efb9b6cfd1
-      - pypi: git+https://github.com/reeceomahoney/lerobot?branch=distal#e75115bd5b79521a30a6029eea732a766a3b4c13
+      - pypi: git+https://github.com/reeceomahoney/lerobot?branch=distal#32327d56abd3cb20968e004147beeb3a6d1ebe30
       - pypi: git+https://github.com/reeceomahoney/libero-plus?rev=distal-deps#cd94bd60f521ff3a7c7e42de171eddbf4f7620e5
       - pypi: git+https://github.com/reeceomahoney/skypilot?branch=vast-no-geo-pin#1b156c120ead15d10863ab1832b80b6a076ed08c
       - pypi: git+https://github.com/reeceomahoney/slurm-tools#23a53f49e1cb436fefdeefa51f52e995816198c2
@@ -1992,7 +1992,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/noarch/tzdata-2025c-hc9c84f9_1.conda
       - pypi: .
       - pypi: git+https://github.com/reeceomahoney/lerobot-doctor?branch=distal#07597438ec38a89401cbfb353e58d2efb9b6cfd1
-      - pypi: git+https://github.com/reeceomahoney/lerobot?branch=distal#e75115bd5b79521a30a6029eea732a766a3b4c13
+      - pypi: git+https://github.com/reeceomahoney/lerobot?branch=distal#32327d56abd3cb20968e004147beeb3a6d1ebe30
       - pypi: git+https://github.com/reeceomahoney/libero-plus?rev=distal-deps#cd94bd60f521ff3a7c7e42de171eddbf4f7620e5
       - pypi: git+https://github.com/reeceomahoney/skypilot?branch=vast-no-geo-pin#1b156c120ead15d10863ab1832b80b6a076ed08c
       - pypi: git+https://github.com/reeceomahoney/slurm-tools#23a53f49e1cb436fefdeefa51f52e995816198c2
@@ -2416,7 +2416,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/zstd-1.5.7-hbf9d68e_6.conda
       - pypi: .
       - pypi: git+https://github.com/reeceomahoney/lerobot-doctor?branch=distal#07597438ec38a89401cbfb353e58d2efb9b6cfd1
-      - pypi: git+https://github.com/reeceomahoney/lerobot?branch=distal#e75115bd5b79521a30a6029eea732a766a3b4c13
+      - pypi: git+https://github.com/reeceomahoney/lerobot?branch=distal#32327d56abd3cb20968e004147beeb3a6d1ebe30
       - pypi: git+https://github.com/reeceomahoney/skypilot?branch=vast-no-geo-pin#1b156c120ead15d10863ab1832b80b6a076ed08c
       - pypi: git+https://github.com/reeceomahoney/slurm-tools#23a53f49e1cb436fefdeefa51f52e995816198c2
       - pypi: https://download.pytorch.org/whl/colorama-0.4.6-py2.py3-none-any.whl
@@ -9662,7 +9662,7 @@ packages:
   - pytest>=7.0 ; extra == 'dev'
   - pytest-tmp-files>=0.0.2 ; extra == 'dev'
   requires_python: '>=3.10'
-- pypi: git+https://github.com/reeceomahoney/lerobot?branch=distal#e75115bd5b79521a30a6029eea732a766a3b4c13
+- pypi: git+https://github.com/reeceomahoney/lerobot?branch=distal#32327d56abd3cb20968e004147beeb3a6d1ebe30
   name: lerobot
   version: 0.5.2
   requires_dist:
@@ -10245,45 +10245,45 @@ packages:
   - grpcio>=1.63.0 ; extra == 'verda'
   - protobuf>=5.26.1,<7.0.0 ; extra == 'verda'
   - aiosqlite ; extra == 'verda'
-  - boto3>=1.26.1 ; extra == 'all'
-  - colorama<0.4.7 ; extra == 'all'
-  - aiosqlite ; extra == 'all'
-  - azure-storage-blob>=12.23.1 ; extra == 'all'
-  - awscli>=1.27.10 ; extra == 'all'
-  - azure-mgmt-network>=27.0.0 ; extra == 'all'
-  - aiohttp ; extra == 'all'
-  - websockets ; extra == 'all'
-  - ecsapi==0.4.0 ; extra == 'all'
-  - google-cloud-storage ; extra == 'all'
+  - cudo-compute>=0.1.10 ; extra == 'all'
+  - pydo>=0.3.0 ; extra == 'all'
+  - python-dateutil ; extra == 'all'
+  - tomli ; extra == 'all'
+  - sqlalchemy-adapter ; extra == 'all'
   - pyopenssl>=23.2.0 ; extra == 'all'
+  - botocore>=1.29.10 ; extra == 'all'
   - kubernetes>=20.0.0,!=32.0.0 ; extra == 'all'
   - pyjwt ; extra == 'all'
-  - anyio ; extra == 'all'
-  - azure-common ; extra == 'all'
-  - tomli ; extra == 'all'
-  - botocore>=1.29.10 ; extra == 'all'
-  - pydo>=0.3.0 ; extra == 'all'
-  - casbin ; extra == 'all'
-  - grpcio>=1.63.0 ; extra == 'all'
-  - msrestazure ; extra == 'all'
-  - protobuf>=5.26.1,<7.0.0 ; extra == 'all'
-  - sqlalchemy-adapter ; extra == 'all'
-  - runpod>=1.6.1 ; extra == 'all'
-  - passlib ; extra == 'all'
-  - azure-core>=1.24.0 ; extra == 'all'
-  - azure-core>=1.31.0 ; extra == 'all'
-  - cudo-compute>=0.1.10 ; extra == 'all'
-  - pycares<5 ; extra == 'all'
-  - python-hostlist ; extra == 'all'
-  - nebius>=0.3.12 ; extra == 'all'
-  - azure-mgmt-compute>=33.0.0 ; extra == 'all'
-  - msgraph-sdk ; extra == 'all'
-  - azure-cli>=2.65.0 ; extra == 'all'
-  - oci ; extra == 'all'
-  - python-dateutil ; extra == 'all'
-  - google-api-python-client>=2.69.0 ; extra == 'all'
-  - pyvmomi==8.0.1.0.2 ; extra == 'all'
+  - azure-mgmt-network>=27.0.0 ; extra == 'all'
   - azure-identity>=1.19.0 ; extra == 'all'
+  - casbin ; extra == 'all'
+  - python-hostlist ; extra == 'all'
+  - aiohttp ; extra == 'all'
+  - grpcio>=1.63.0 ; extra == 'all'
+  - azure-core>=1.31.0 ; extra == 'all'
+  - awscli>=1.27.10 ; extra == 'all'
+  - google-api-python-client>=2.69.0 ; extra == 'all'
+  - aiosqlite ; extra == 'all'
+  - oci ; extra == 'all'
+  - pyvmomi==8.0.1.0.2 ; extra == 'all'
+  - colorama<0.4.7 ; extra == 'all'
+  - websockets ; extra == 'all'
+  - msgraph-sdk ; extra == 'all'
+  - ecsapi==0.4.0 ; extra == 'all'
+  - azure-core>=1.24.0 ; extra == 'all'
+  - boto3>=1.26.1 ; extra == 'all'
+  - msrestazure ; extra == 'all'
+  - azure-cli>=2.65.0 ; extra == 'all'
+  - azure-common ; extra == 'all'
+  - passlib ; extra == 'all'
+  - pycares<5 ; extra == 'all'
+  - protobuf>=5.26.1,<7.0.0 ; extra == 'all'
+  - azure-storage-blob>=12.23.1 ; extra == 'all'
+  - google-cloud-storage ; extra == 'all'
+  - runpod>=1.6.1 ; extra == 'all'
+  - azure-mgmt-compute>=33.0.0 ; extra == 'all'
+  - nebius>=0.3.12 ; extra == 'all'
+  - anyio ; extra == 'all'
   - grpcio>=1.63.0 ; extra == 'remote'
   - protobuf>=5.26.1,<7.0.0 ; extra == 'remote'
   - casbin ; extra == 'server'

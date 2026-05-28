@@ -93,21 +93,23 @@ def save_and_report(out_path, names, actions, recorded_state, live_state, n_done
 
     a = actions[:n_done]
     r = recorded_state[:n_done]
-    l = live_state[:n_done]
+    lv = live_state[:n_done]
 
     rec_err = np.abs(a - r).mean(axis=0)
-    live_err = np.abs(a - l).mean(axis=0)
-    drift = np.abs(r - l).mean(axis=0)
-    bias = (l - r).mean(axis=0)
+    live_err = np.abs(a - lv).mean(axis=0)
+    drift = np.abs(r - lv).mean(axis=0)
+    bias = (lv - r).mean(axis=0)
 
     reported = [(i, n) for i, n in enumerate(names) if "gripper" not in n]
     w = max(len(n) for _, n in reported)
     print(
-        f"\n{'joint':{w}}  {'|act-state| rec':>15}  {'|act-state| live':>17}  {'|rec-live|':>11}  {'live-rec bias':>14}"
+        f"\n{'joint':{w}}  {'|act-state| rec':>15}  "
+        f"{'|act-state| live':>17}  {'|rec-live|':>11}  {'live-rec bias':>14}"
     )
     for i, n in reported:
         print(
-            f"{n:{w}}  {rec_err[i]:15.3f}  {live_err[i]:17.3f}  {drift[i]:11.3f}  {bias[i]:+14.3f}"
+            f"{n:{w}}  {rec_err[i]:15.3f}  {live_err[i]:17.3f}  "
+            f"{drift[i]:11.3f}  {bias[i]:+14.3f}"
         )
     print("(grippers excluded from report)")
 
